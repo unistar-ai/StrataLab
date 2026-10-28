@@ -1,0 +1,1646 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Strata Lab</title>
+<!-- The favicon is what an --app window uses for its title-bar and taskbar icon.
+     Without it Edge draws a generic globe and the window reads as "just a browser tab". -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='15' fill='%230f1116'/%3E%3Cpath d='M40.5 23.6c-1.6-2.6-4.5-4.1-8.4-4.1-5.4 0-9.1 2.7-9.1 6.9 0 3.7 2.6 5.7 7.7 6.8l3 .6c2.6.6 3.6 1.4 3.6 2.8 0 1.8-1.8 3-4.9 3-3.4 0-5.9-1.4-7.3-4l-4.2 2.6c1.9 3.7 5.9 5.8 11.3 5.8 6.2 0 10.2-2.9 10.2-7.5 0-3.8-2.5-5.9-8-7l-3-.6c-2.4-.5-3.4-1.2-3.4-2.6 0-1.7 1.7-2.7 4.4-2.7 2.7 0 4.7 1 6 3z' fill='%23ffffff'/%3E%3C/svg%3E" />
+<link rel="stylesheet" href="/static/xterm.css" />
+<script src="/static/xterm.js"></script>
+<script src="/static/addon-fit.js"></script>
+<style>
+  /* ------------------------------------------------------------------ theme */
+  :root{
+    --r:14px;
+    --mono:"Cascadia Code","JetBrains Mono",Consolas,monospace;
+    --sans:"Microsoft YaHei UI","PingFang SC","Segoe UI",system-ui,sans-serif;
+  }
+  html[data-theme="dark"]{
+    --bg:#0a0b0e; --glow:#141a2c; --panel:#121419; --panel2:#191c23; --panel3:#1f232b;
+    --line:#23262f; --line2:#2e323d;
+    --txt:#eef1f6; --dim:#a3abb9; --mute:#6f7787;
+    --ok:#35c98a; --warn:#f0a94a; --err:#ef6b6b; --accent:#6f9bff;
+    --btn-bg:#eef1f6; --btn-fg:#0a0b0e; --shadow:0 1px 2px rgba(0,0,0,.4);
+    --code-bg:#0e1015;
+  }
+  html[data-theme="light"]{
+    --bg:#f6f6f7; --glow:#ffffff; --panel:#ffffff; --panel2:#f4f4f6; --panel3:#ececef;
+    --line:#e5e5e9; --line2:#d8d8de;
+    --txt:#141519; --dim:#5f646f; --mute:#8b909b;
+    --ok:#127a55; --warn:#9a6412; --err:#b23a3a; --accent:#2c48c0;
+    --btn-bg:#16171b; --btn-fg:#ffffff; --shadow:0 1px 3px rgba(16,18,25,.07);
+    --code-bg:#f7f7f9;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0; display:flex; flex-direction:column; overflow:hidden;
+    background:
+      radial-gradient(900px 420px at 8% -12%, var(--glow) 0%, transparent 70%),
+      var(--bg);
+    color:var(--txt); font:13.5px/1.55 var(--sans);
+    -webkit-font-smoothing:antialiased;
+  }
+  ::selection{background:color-mix(in srgb, var(--accent) 30%, transparent)}
+
+  /* ------------------------------------------------------------------ header */
+  header.top{
+    flex:0 0 auto; display:flex; align-items:center; gap:16px; padding:12px 20px;
+    border-bottom:1px solid var(--line); background:color-mix(in srgb, var(--panel) 72%, transparent);
+    backdrop-filter:blur(10px); flex-wrap:wrap; row-gap:6px;
+  }
+  .brand{display:flex; align-items:center; gap:9px; font-size:14.5px; font-weight:650; letter-spacing:.2px; white-space:nowrap}
+  .brand .mark{
+    width:22px; height:22px; border-radius:7px; display:grid; place-items:center;
+    background:var(--btn-bg); color:var(--btn-fg); font-size:12px; font-weight:800;
+  }
+  .brand em{font-style:normal; font-size:10.5px; font-weight:500; color:var(--mute); letter-spacing:.04em}
+  nav.pills{
+    display:flex; gap:2px; margin:0 auto; padding:3px; border:1px solid var(--line);
+    border-radius:999px; background:var(--panel2); flex:0 0 auto;
+  }
+  nav.pills button{
+    border:0; background:transparent; color:var(--dim); font:12.5px var(--sans);
+    padding:5px 13px; border-radius:999px; cursor:pointer; transition:.13s;
+  }
+  nav.pills button:hover{color:var(--txt)}
+  nav.pills button.on{background:var(--panel); color:var(--txt); box-shadow:var(--shadow); font-weight:600}
+  .hright{display:flex; align-items:center; gap:8px; flex:0 0 auto}
+  .chip{
+    display:flex; align-items:center; gap:7px; font-size:12px; color:var(--dim);
+    border:1px solid var(--line); background:var(--panel); border-radius:999px; padding:4px 11px; white-space:nowrap;
+    max-width:280px; overflow:hidden;
+  }
+  .dot{width:7px; height:7px; border-radius:50%; background:var(--mute); flex:0 0 auto}
+  .dot.ok{background:var(--ok); box-shadow:0 0 0 3px color-mix(in srgb,var(--ok) 16%,transparent)}
+  .dot.busy{background:var(--warn); box-shadow:0 0 0 3px color-mix(in srgb,var(--warn) 16%,transparent)}
+  .dot.err{background:var(--err)}
+  .icon{
+    width:30px; height:30px; display:grid; place-items:center; border-radius:9px; cursor:pointer;
+    border:1px solid var(--line); background:var(--panel); color:var(--dim); font-size:14px; font-family:var(--sans);
+  }
+  .icon:hover{color:var(--txt); border-color:var(--line2)}
+  .icon.exit{
+    width:auto; padding:0 11px; display:inline-flex; gap:6px; font-size:12px; font-weight:600;
+    color:var(--err); border-color:color-mix(in srgb,var(--err) 38%,var(--line));
+  }
+  .icon.exit:hover{
+    color:var(--err); border-color:var(--err);
+    background:color-mix(in srgb,var(--err) 8%,var(--panel));
+  }
+
+  /* ------------------------------------------------------------------ shell */
+  main{flex:1; min-height:0; position:relative}
+  .tab{position:absolute; inset:0; display:none; flex-direction:column; gap:16px; padding:20px; overflow:auto}
+  .tab.on{display:flex}
+  .sec{display:flex; align-items:flex-end; gap:14px; flex-wrap:wrap}
+  .eyebrow{font-size:10.5px; letter-spacing:.14em; text-transform:uppercase; color:var(--mute); font-weight:600}
+  h1{margin:1px 0 0; font-size:21px; font-weight:650; letter-spacing:-.2px}
+  .sec .tools{margin-left:auto; display:flex; align-items:center; gap:10px}
+  .muted{color:var(--dim); font-size:12px}
+  .mute{color:var(--mute); font-size:11.5px}
+  .mono{font-family:var(--mono)}
+
+  .card{background:var(--panel); border:1px solid var(--line); border-radius:var(--r); padding:16px 18px; box-shadow:var(--shadow); min-width:0}
+  .card h2{
+    margin:0 0 12px; font-size:12px; font-weight:650; letter-spacing:.06em; text-transform:uppercase; color:var(--mute);
+    display:flex; align-items:center; gap:8px;
+  }
+  .card h2 .hint{margin-left:auto; text-transform:none; letter-spacing:0; font-weight:500; font-size:11px; color:var(--mute)}
+  .cols{display:grid; grid-template-columns:minmax(0,1.3fr) minmax(0,1fr); gap:14px; align-items:start}
+  .col{display:flex; flex-direction:column; gap:14px; min-width:0}
+
+  /* ------------------------------------------------------------------ kpi */
+  .kpi3{display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:14px}
+  .kpi{background:var(--panel); border:1px solid var(--line); border-radius:var(--r); padding:16px 18px; box-shadow:var(--shadow)}
+  .kpi .k{font-size:11px; letter-spacing:.1em; color:var(--mute); font-weight:600}
+  .kpi .v{margin-top:8px; font-size:33px; font-weight:650; letter-spacing:-1px; line-height:1.05; font-variant-numeric:tabular-nums}
+  .kpi .v small{font-size:13px; font-weight:500; color:var(--mute); letter-spacing:0; margin-left:3px}
+  .kpi .s{margin-top:5px; font-size:11.5px; color:var(--mute)}
+
+  .seg{display:inline-flex; padding:2px; gap:2px; border:1px solid var(--line); border-radius:9px; background:var(--panel2)}
+  .seg button{border:0; background:transparent; color:var(--dim); font:12px var(--sans); padding:4px 11px; border-radius:7px; cursor:pointer}
+  .seg button.on{background:var(--panel); color:var(--txt); font-weight:600; box-shadow:var(--shadow)}
+
+  .speed{display:grid; grid-template-columns:repeat(3,1fr)}
+  .speed > div{padding:2px 18px; border-left:1px solid var(--line)}
+  .speed > div:first-child{padding-left:0; border-left:0}
+  .speed .k{font-size:11px; letter-spacing:.1em; color:var(--mute); font-weight:600}
+  .speed .v{margin-top:6px; font-size:25px; font-weight:650; letter-spacing:-.5px; font-variant-numeric:tabular-nums}
+  .speed .v small{font-size:12px; font-weight:500; color:var(--mute); margin-left:3px; letter-spacing:0}
+  .speed .s{font-size:11px; color:var(--mute); margin-top:2px}
+
+  /* ------------------------------------------------------------------ rows / endpoints */
+  .rows{display:flex; flex-direction:column}
+  .row{display:flex; align-items:center; gap:12px; padding:9px 0; border-top:1px solid var(--line)}
+  .row:first-child{border-top:0; padding-top:2px}
+  .row .label{font-size:12.5px; color:var(--dim); width:88px; flex:0 0 auto}
+  .row code, .app code{
+    flex:1; min-width:0; font:12px var(--mono); color:var(--txt); background:var(--code-bg);
+    border:1px solid var(--line); border-radius:8px; padding:5px 9px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+    user-select:all;
+  }
+  .copy{
+    flex:0 0 auto; border:1px solid var(--line); background:var(--panel2); color:var(--dim);
+    border-radius:8px; padding:4px 9px; font:11.5px var(--sans); cursor:pointer; min-width:52px; transition:.13s;
+  }
+  .copy:hover{color:var(--txt); border-color:var(--line2)}
+  .copy.ok{color:var(--ok); border-color:color-mix(in srgb,var(--ok) 50%,var(--line))}
+
+  /* ------------------------------------------------------------------ apps */
+  .apps{display:flex; flex-direction:column}
+  .app{display:flex; align-items:center; gap:11px; padding:10px 0; border-top:1px solid var(--line)}
+  .app:first-child{border-top:0; padding-top:2px}
+  .app .ic{
+    width:28px; height:28px; flex:0 0 auto; border-radius:8px; display:grid; place-items:center;
+    background:var(--panel2); border:1px solid var(--line); font-weight:700; font-size:12.5px; color:var(--mute);
+  }
+  .app.on .ic{background:color-mix(in srgb,var(--ok) 13%,var(--panel2)); border-color:color-mix(in srgb,var(--ok) 38%,var(--line)); color:var(--ok)}
+  .app .who{min-width:0; flex:0 0 auto; width:196px}
+  .app .who b{display:block; font-size:12.5px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+  .app .who span{display:block; font-size:10.5px; color:var(--mute); white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+  .app code{font-size:11px; color:var(--dim)}
+  .pill{font-size:10.5px; padding:2px 8px; border-radius:999px; border:1px solid var(--line); color:var(--mute); white-space:nowrap}
+  .pill.ok{color:var(--ok); border-color:color-mix(in srgb,var(--ok) 40%,var(--line)); background:color-mix(in srgb,var(--ok) 8%,transparent)}
+
+  /* ------------------------------------------------------------------ kv / gauges */
+  .kv{display:grid; grid-template-columns:88px 1fr; gap:7px 12px; font-size:12.5px}
+  .kv b{color:var(--mute); font-weight:500}
+  .kv span{min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .gauge{margin-top:12px}
+  .gauge .lab{display:flex; justify-content:space-between; font-size:11.5px; color:var(--mute); margin-bottom:5px}
+  .gauge .bar{height:5px; border-radius:3px; background:var(--panel3); overflow:hidden}
+  .gauge .bar i{display:block; height:100%; border-radius:3px; background:var(--accent); transition:width .5s}
+  .gauge .bar i.hot{background:linear-gradient(90deg,var(--warn),var(--err))}
+
+  /* ------------------------------------------------------------------ jobs */
+  .jobs{display:flex; flex-direction:column; gap:7px; max-height:210px; overflow:auto}
+  .job{display:flex; align-items:baseline; gap:8px; font-size:12px; color:var(--dim)}
+  .job .st{font-size:10px; padding:1px 7px; border-radius:999px; background:var(--panel3); color:var(--mute); flex:0 0 auto}
+  .job .st.ready{background:color-mix(in srgb,var(--ok) 15%,transparent); color:var(--ok)}
+  .job .st.failed{background:color-mix(in srgb,var(--err) 15%,transparent); color:var(--err)}
+  .job .st.running{background:color-mix(in srgb,var(--warn) 16%,transparent); color:var(--warn)}
+  .job .t{flex:0 0 auto}
+  .job .d{flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--mute)}
+  .job .when{flex:0 0 auto; color:var(--mute); font-size:11px}
+
+  canvas{display:block; width:100%; height:118px}
+  .live-charts{display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px}
+  .live-charts canvas{height:180px; min-width:0}
+
+  /* ------------------------------------------------------------------ buttons / inputs */
+  button.primary{
+    background:var(--btn-bg); color:var(--btn-fg); border:0; border-radius:10px; padding:8px 16px;
+    font:12.5px var(--sans); font-weight:600; cursor:pointer; transition:filter .13s;
+  }
+  button.primary:hover{filter:brightness(1.06)}
+  button.primary:disabled{background:var(--panel3); color:var(--mute); cursor:not-allowed; filter:none}
+  button.mini{
+    background:var(--panel2); border:1px solid var(--line); color:var(--dim); border-radius:9px;
+    padding:6px 12px; font:12px var(--sans); cursor:pointer;
+  }
+  button.mini:hover{color:var(--txt); border-color:var(--line2)}
+  button.mini.danger{color:var(--err); border-color:color-mix(in srgb,var(--err) 40%,var(--line))}
+  .btnrow{display:flex; gap:9px; flex-wrap:wrap; align-items:center}
+  input,select,textarea{
+    background:var(--code-bg); border:1px solid var(--line); color:var(--txt); border-radius:9px;
+    padding:7px 10px; font:12.5px var(--mono); outline:none;
+  }
+  input:focus,select:focus,textarea:focus{border-color:var(--line2); box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 15%,transparent)}
+  textarea{resize:vertical; width:100%; min-height:84px; font-family:var(--mono); line-height:1.6}
+  label.inline{display:flex; align-items:center; gap:7px; font-size:12px; color:var(--dim)}
+
+  /* ------------------------------------------------------------------ profiles */
+  .profiles{display:grid; grid-template-columns:repeat(auto-fit,minmax(258px,1fr)); gap:12px}
+  .profile{border:1px solid var(--line); border-radius:12px; padding:13px 14px; background:var(--panel2)}
+  .profile.active{border-color:var(--accent); box-shadow:0 0 0 1px var(--accent) inset}
+  .profile .head{display:flex; align-items:center; gap:8px; margin-bottom:6px; flex-wrap:wrap}
+  .profile .head b{font-size:13.5px}
+  .profile .tag{font-size:10px; color:var(--mute); border:1px solid var(--line); border-radius:999px; padding:1px 7px}
+  .profile .tag.cur{color:var(--accent); border-color:color-mix(in srgb,var(--accent) 45%,var(--line))}
+  .profile .desc{font-size:12px; color:var(--dim); min-height:36px}
+  .profile .meta{font-size:11px; color:var(--mute); margin:8px 0 10px; font-family:var(--mono)}
+  .profile .go{width:100%}
+
+  /* ------------------------------------------------------------------ tables */
+  table{width:100%; border-collapse:collapse; font-size:12px}
+  th{text-align:left; color:var(--mute); font-weight:500; padding:6px 8px; border-bottom:1px solid var(--line); font-size:11px; letter-spacing:.04em; text-transform:uppercase}
+  td{padding:6px 8px; border-bottom:1px solid var(--line); color:var(--dim); white-space:nowrap; font-variant-numeric:tabular-nums}
+  td.note{white-space:normal; color:var(--mute)}
+  tr:last-child td{border-bottom:0}
+  .okc{color:var(--ok)} .errc{color:var(--err)} .warnc{color:var(--warn)}
+
+  /* ------------------------------------------------------------------ chat */
+  .chatwrap{display:grid; grid-template-columns:290px minmax(0,1fr); gap:14px; min-height:0; flex:1}
+  .chatlog{display:flex; flex-direction:column; gap:10px; overflow:auto; padding:4px 6px 4px 0; min-height:0}
+  .msg{border-radius:12px; padding:10px 13px; font-size:13px; white-space:pre-wrap; word-break:break-word; user-select:text; max-width:94%}
+  .msg.user{background:var(--panel2); border:1px solid var(--line); align-self:flex-end}
+  .msg.bot{background:var(--panel); border:1px solid var(--line); align-self:flex-start; box-shadow:var(--shadow)}
+  .msg .meta{font-size:10.5px; color:var(--mute); margin-bottom:6px; font-family:var(--mono)}
+  .chatbox{display:flex; flex-direction:column; gap:10px; min-height:0}
+
+  /* ------------------------------------------------------------------ logs */
+  .logbox{
+    flex:1; min-height:220px; overflow:auto; background:var(--code-bg); border:1px solid var(--line);
+    border-radius:12px; padding:12px 14px; font:11.5px/1.62 var(--mono); color:var(--dim);
+    white-space:pre-wrap; word-break:break-all; user-select:text;
+  }
+
+  /* ------------------------------------------------------------------ terminal */
+  #term-pane{
+    flex:1; min-height:220px; background:var(--code-bg); border:1px solid var(--line);
+    border-radius:12px; padding:10px 4px 8px 12px; overflow:hidden;
+  }
+  #term-pane .xterm{height:100%}
+  #term-pane .xterm-viewport{background:transparent !important}
+
+  /* ------------------------------------------------------------------ banner / toast */
+  .banner{display:none; gap:10px; align-items:flex-start; font-size:12.5px; border-radius:12px; padding:11px 14px; line-height:1.6}
+  .banner.show{display:flex}
+  .banner.warn{color:var(--warn); background:color-mix(in srgb,var(--warn) 9%,transparent); border:1px solid color-mix(in srgb,var(--warn) 30%,var(--line))}
+  .banner.info{color:var(--dim); background:var(--panel2); border:1px solid var(--line)}
+  .banner b{font-weight:650}
+  #toast{
+    position:fixed; left:50%; bottom:26px; transform:translateX(-50%) translateY(10px);
+    background:var(--panel); border:1px solid var(--line2); color:var(--txt); box-shadow:0 8px 30px rgba(0,0,0,.3);
+    padding:10px 18px; border-radius:11px; font-size:12.5px; opacity:0; pointer-events:none;
+    transition:.18s; max-width:70vw; text-align:center; z-index:40;
+  }
+  #toast.show{opacity:1; transform:translateX(-50%) translateY(0)}
+  #toast.bad{border-color:var(--err); color:var(--err)}
+  @media (max-width:1180px){
+    /* Narrow window (this desktop is ~1000 DIP wide at 200% scaling): the tab row moves
+       to its own line instead of disappearing, so every tab stays reachable. */
+    header.top{flex-wrap:wrap; row-gap:7px; padding:9px 12px}
+    .brand{flex:1 1 auto}
+    nav.pills{order:3; width:100%; margin:0; justify-content:center; overflow-x:auto}
+    nav.pills button{padding:5px 10px; font-size:12px}
+    .chip{max-width:190px}
+    .cols{grid-template-columns:minmax(0,1fr)}
+    .kpi3{grid-template-columns:repeat(2,minmax(0,1fr))}
+    .chatwrap{grid-template-columns:minmax(0,1fr)}
+  }
+  @media (max-width:720px){
+    .kpi3{grid-template-columns:minmax(0,1fr)}
+    .speed{grid-template-columns:1fr}
+    .speed > div{border-left:0; padding:0 0 10px}
+  }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="brand"><span class="mark">S</span>Strata Lab <em>v0.4</em></div>
+  <nav class="pills" id="nav">
+    <button data-tab="dash" class="on">概览</button>
+    <button data-tab="models">模型</button>
+    <button data-tab="term">终端</button>
+    <button data-tab="chat">对话</button>
+    <button data-tab="bench">基准</button>
+    <button data-tab="history">历史</button>
+    <button data-tab="logs">日志</button>
+    <button data-tab="settings">设置</button>
+  </nav>
+  <div class="hright">
+    <span class="chip" id="chip-state"><i class="dot"></i><span>…</span></span>
+    <button class="icon" id="theme-btn" title="浅色 / 深色" onclick="toggleTheme()">☾</button>
+    <button class="icon exit" title="退出控制台并停止引擎" aria-label="退出控制台并停止引擎" onclick="quitConsole(true)">退出</button>
+  </div>
+</header>
+
+<main>
+  <!-- ================================================================ 概览 -->
+  <section class="tab on" id="tab-dash">
+    <div class="banner" id="banner"></div>
+
+    <div class="sec">
+      <div>
+        <div class="eyebrow">状态</div>
+        <h1>服务统计</h1>
+      </div>
+      <div class="tools">
+        <span class="mute" id="stats-src">—</span>
+        <div class="seg" id="scope-seg">
+          <button class="on" data-scope="run">本次运行</button>
+          <button data-scope="all">全部</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="kpi3" id="kpi-main"></div>
+
+    <div class="card" id="live-card">
+      <h2>实时速度 <span class="hint" id="live-state">读取中…</span></h2>
+      <div class="speed" id="live-speed"></div>
+    </div>
+
+    <div class="live-charts">
+      <div class="card">
+        <h2>Prefill 预填速度 <span class="hint">近 60 个采样点 · 独立纵轴</span></h2>
+        <canvas id="prefill-chart" title="Prefill · 近 60 个采样点 · 独立纵轴"></canvas>
+      </div>
+      <div class="card">
+        <h2>Decode 生成速度 <span class="hint">近 60 个采样点 · 独立纵轴</span></h2>
+        <canvas id="decode-chart" title="Decode · 近 60 个采样点 · 独立纵轴"></canvas>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>平均速度 <span class="hint" id="speed-hint">—</span></h2>
+      <div class="speed" id="speed"></div>
+    </div>
+
+    <div class="cols">
+      <div class="col">
+        <div class="card">
+          <h2>API 端点 <span class="hint">复制后直接粘进客户端</span></h2>
+          <div class="rows" id="endpoints"></div>
+        </div>
+        <div class="card">
+          <h2>客户端接入 <span class="hint">已检测到的可以直接用</span></h2>
+          <div class="apps" id="apps"></div>
+        </div>
+      </div>
+
+      <div class="col">
+        <div class="card">
+          <h2>引擎 <span class="hint" id="engine-build">—</span></h2>
+          <div class="kv" id="engine-kv"></div>
+          <div class="gauge">
+            <div class="lab"><span>显存占用</span><span id="g-vram">—</span></div>
+            <div class="bar"><i id="bar-vram" style="width:0%"></i></div>
+          </div>
+          <div class="gauge">
+            <div class="lab"><span>内存占用</span><span id="g-ram">—</span></div>
+            <div class="bar"><i id="bar-ram" style="width:0%"></i></div>
+          </div>
+          <div class="btnrow" style="margin-top:14px" id="eng-actions"></div>
+        </div>
+
+        <div class="card">
+          <h2>趋势 <span class="hint">显存 / 空闲内存 · 近 5 分钟</span></h2>
+          <canvas id="spark" width="700" height="240"></canvas>
+        </div>
+
+        <div class="card">
+          <h2>最近任务</h2>
+          <div class="jobs" id="jobs"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================================================================ 模型 -->
+  <section class="tab" id="tab-models">
+    <div class="sec">
+      <div>
+        <div class="eyebrow">模型</div>
+        <h1>档位与磁盘</h1>
+      </div>
+      <div class="tools"><span class="mute" id="scan-tag">—</span></div>
+    </div>
+    <div class="card">
+      <h2>档位 <span class="hint">启动会占满显存，40–90 秒</span></h2>
+      <div class="profiles" id="model-profiles"></div>
+    </div>
+    <div class="cols">
+      <div class="col">
+        <div class="card">
+          <h2>磁盘上的模型</h2>
+          <table id="scan-table"></table>
+        </div>
+      </div>
+      <div class="col">
+        <div class="card">
+          <h2>补分片 <span class="hint">从 hf-mirror 续传</span></h2>
+          <div class="muted">下载写进 <code class="mono">*.labpart</code>，字节数校验通过才改名，中途放弃可续传。</div>
+          <div class="btnrow" style="margin-top:10px">
+            <select id="dl-profile"></select>
+            <button class="primary" onclick="startDownload()">开始下载</button>
+            <button class="mini" onclick="cancelJob()">放弃</button>
+          </div>
+          <div class="mute" id="dl-progress" style="margin-top:9px"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================================================================ 终端 -->
+  <section class="tab" id="tab-term">
+    <div class="sec">
+      <div>
+        <div class="eyebrow">终端</div>
+        <h1>命令行</h1>
+      </div>
+      <div class="tools">
+        <span class="chip" id="term-state"><i class="dot"></i><span>未启动</span></span>
+        <button class="mini" onclick="termStart('cmd')">cmd</button>
+        <button class="mini" onclick="termStart('pwsh')">PowerShell</button>
+        <button class="mini" onclick="termStart('pi')">pi</button>
+        <button class="mini" onclick="termStart('python')">Python</button>
+        <button class="mini" onclick="termClear()">清屏</button>
+        <button class="mini" onclick="termRestart()">重启</button>
+      </div>
+    </div>
+    <div id="term-pane"></div>
+    <div class="mute" style="margin-top:6px">
+      真 pty（Windows ConPTY），不是伪终端：pi、python -i、带颜色的程序都能正常跑。
+      切换页签不会杀进程；「重启」换一个干净的 shell。
+    </div>
+  </section>
+
+  <!-- ================================================================ 对话 -->
+  <section class="tab" id="tab-chat">
+    <div class="chatwrap">
+      <div class="col">
+        <div class="card">
+          <h2>参数</h2>
+          <div class="kv">
+            <b>思考强度</b>
+            <select id="chat-effort">
+              <option value="none">none</option>
+              <option value="low">low</option>
+              <option value="medium" selected>medium</option>
+              <option value="high">high</option>
+            </select>
+            <b>max_tokens</b><input id="chat-max" type="number" value="1024" min="16" max="32768" step="16" />
+            <b>系统提示</b><input id="chat-system" placeholder="可留空" />
+          </div>
+          <div class="mute" style="margin-top:9px">只走本机 8080，不上云，刷新即清空。</div>
+        </div>
+        <div class="card">
+          <h2>当前指标</h2>
+          <div class="kv" id="chat-stats"></div>
+        </div>
+      </div>
+      <div class="col chatbox">
+        <div class="chatlog" id="chatlog"></div>
+        <div class="card">
+          <textarea id="chat-input" placeholder="Ctrl+Enter 发送"></textarea>
+          <div class="btnrow" style="margin-top:9px">
+            <button class="primary" id="chat-send" onclick="sendChat()">发送</button>
+            <button class="mini" id="chat-stop" onclick="cancelJob()" disabled>停止</button>
+            <button class="mini" onclick="clearChat()">清空</button>
+            <span class="mute" id="chat-hint"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================================================================ 基准 -->
+  <section class="tab" id="tab-bench">
+    <div class="sec">
+      <div>
+        <div class="eyebrow">基准</div>
+        <h1>单请求测速</h1>
+      </div>
+      <div class="tools"><span class="mute">首字延迟 / 生成速度 / 缓存命中</span></div>
+    </div>
+    <div class="cols">
+      <div class="col">
+        <div class="card">
+          <h2>参数</h2>
+          <textarea id="bench-prompt">用三句话介绍你自己，并说明你最擅长什么。</textarea>
+          <div class="btnrow" style="margin-top:10px">
+            <label class="inline">tokens <input id="bench-max" type="number" value="200" min="8" max="8192" step="8" style="width:88px" /></label>
+            <label class="inline">思考
+              <select id="bench-effort">
+                <option value="none" selected>none</option>
+                <option value="low">low</option>
+                <option value="medium">medium</option>
+                <option value="high">high</option>
+              </select>
+            </label>
+            <button class="primary" onclick="runBench()">开始测速</button>
+            <button class="mini" onclick="cancelJob()">放弃</button>
+          </div>
+          <div class="mute" id="bench-result" style="margin-top:10px">—</div>
+        </div>
+      </div>
+      <div class="col">
+        <div class="card">
+          <h2>最近测速 <span class="hint">来自 history.json</span></h2>
+          <table id="bench-table"></table>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================================================================ 历史 -->
+  <section class="tab" id="tab-history">
+    <div class="sec">
+      <div>
+        <div class="eyebrow">历史</div>
+        <h1>速度记录</h1>
+      </div>
+      <div class="tools">
+        <button class="mini" onclick="exportCsv()">导出 CSV</button>
+        <button class="mini danger" onclick="clearHistory()">清空记录</button>
+      </div>
+    </div>
+    <div class="card">
+      <h2>decode 速度走势</h2>
+      <canvas id="hist-spark" width="700" height="200"></canvas>
+    </div>
+    <div class="card">
+      <h2>记录</h2>
+      <div style="overflow:auto"><table id="hist-table"></table></div>
+    </div>
+  </section>
+
+  <!-- ================================================================ 日志 -->
+  <section class="tab" id="tab-logs">
+    <div class="sec">
+      <div>
+        <div class="eyebrow">日志</div>
+        <h1>引擎输出</h1>
+      </div>
+      <div class="tools">
+        <select id="log-file" onchange="loadLogs(true)"></select>
+        <input id="log-grep" placeholder="过滤（正则）" style="width:200px" />
+        <label class="inline"><input type="checkbox" id="log-follow" checked /> 跟随</label>
+        <button class="mini" onclick="loadLogs(true)">刷新</button>
+      </div>
+    </div>
+    <div class="logbox" id="logbox">读取中…</div>
+  </section>
+
+  <!-- ================================================================ 设置 -->
+  <section class="tab" id="tab-settings">
+    <div class="sec">
+      <div>
+        <div class="eyebrow">设置</div>
+        <h1>接入与档位</h1>
+      </div>
+    </div>
+    <div class="cols">
+      <div class="col">
+        <div class="card">
+          <h2>接入信息</h2>
+          <div class="kv" id="conn"></div>
+        </div>
+        <div class="card">
+          <h2>档位参数 <span class="hint">改完下次启动生效</span></h2>
+          <div id="settings-profiles" style="display:flex;flex-direction:column;gap:11px"></div>
+          <button class="primary" style="margin-top:12px" onclick="saveProfiles()">保存到 profiles.json</button>
+        </div>
+      </div>
+      <div class="col">
+        <div class="card">
+          <h2>说明</h2>
+          <div class="muted" style="line-height:2">
+            · 上下文默认 256K（<span class="mono">262144</span>），本机实测可行。<br />
+            · <span class="mono">vision=cpu</span>：读图走 CPU，不占显存。<br />
+            · 显存余量低于 1024 MB 时顶部会提示——这是引擎自己的告警线；真正拖慢的是别的程序来抢显存。<br />
+            · 启动前自动清理上次硬杀留下的 stale 标记（仅在没有 strata.exe 时）。<br />
+            · 停止引擎会断开所有客户端（DSH / pi / Kimi Code）。
+          </div>
+        </div>
+        <div class="card">
+          <h2>关闭</h2>
+          <div class="btnrow">
+            <button class="mini" onclick="stopEngine()">停止引擎</button>
+            <button class="mini" onclick="quitConsole(false)">只退出控制台</button>
+            <button class="mini danger" onclick="quitConsole(true)">退出并停止引擎</button>
+          </div>
+          <div class="mute" style="margin-top:10px; line-height:1.8">
+            关掉这个窗口，大约 10 秒内控制台就会退出并<b>停掉引擎</b>（判断依据：窗口消失 + 没有页面心跳，两个条件同时成立才动手，避免误杀）。
+            「只退出控制台」会保留引擎。</div>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+<div id="toast"></div>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const S = { status:null, stats:null, conn:null, meta:null, metrics:null,
+            scope:"run", tab:"dash", activeJob:null, poll:null, jobs:[],
+            chatBusy:false, histItems:null };
+const TERM = { obj:null, fit:null, seq:0, timer:null, kind:"cmd" };
+const LIVE = { inFlight:false };
+
+/* ------------------------------------------------------------------ utils */
+let toastTimer = null;
+function toast(msg, bad){
+  const t = $("toast");
+  t.textContent = msg;
+  t.className = "show" + (bad ? " bad" : "");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { t.className = ""; }, 4200);
+}
+async function api(path, opt){
+  const r = await fetch(path, opt);
+  let data;
+  try { data = await r.json(); } catch { data = { error:"bad json" }; }
+  if (!r.ok) throw Object.assign(new Error(data.error || ("HTTP " + r.status)), { data });
+  return data;
+}
+const nf = n => (n === null || n === undefined) ? "—" : Number(n).toLocaleString("zh-CN");
+const num = (n, d) => (n === null || n === undefined) ? "—" : Number(n).toFixed(d === undefined ? 1 : d);
+function compact(n){
+  if (n === null || n === undefined) return "—";
+  if (n >= 1e9) return (n/1e9).toFixed(2) + "B";
+  if (n >= 1e6) return (n/1e6).toFixed(2) + "M";
+  if (n >= 1e4) return (n/1e3).toFixed(1) + "k";
+  return nf(n);
+}
+const fmtSize = b => !b ? "0 MB" : (b >= 1073741824 ? (b/1073741824).toFixed(1) + " GB" : Math.round(b/1048576) + " MB");
+const ago = ts => {
+  const s = Math.max(0, Math.round(Date.now()/1000 - ts));
+  return s < 60 ? s + "s 前" : (s < 3600 ? Math.round(s/60) + "m 前" : Math.round(s/3600) + "h 前");
+};
+const dur = s => {
+  if (s === null || s === undefined || s < 0) return "—";
+  const h = Math.floor(s/3600), m = Math.floor((s%3600)/60);
+  return h ? h + "h " + m + "m" : (m ? m + "m" : Math.round(s) + "s");
+};
+function esc(s){
+  return String(s === null || s === undefined ? "" : s)
+    .replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;");
+}
+async function copyText(text, btn){
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    const t = document.createElement("textarea");
+    t.value = text; document.body.appendChild(t); t.select();
+    try { document.execCommand("copy"); } catch {}
+    t.remove();
+  }
+  const old = btn.textContent;
+  btn.textContent = "已复制"; btn.classList.add("ok");
+  setTimeout(() => { btn.textContent = old; btn.classList.remove("ok"); }, 1300);
+}
+
+/* ------------------------------------------------------------------ theme */
+function cssVar(n){ return getComputedStyle(document.documentElement).getPropertyValue(n).trim(); }
+function applyTheme(t){
+  document.documentElement.dataset.theme = t;
+  try { localStorage.setItem("strata-lab-theme", t); } catch {}
+  $("theme-btn").textContent = t === "dark" ? "☾" : "☀";
+  if (TERM.obj) TERM.obj.options.theme = termTheme();
+  drawSpark();
+  drawHist();
+}
+function toggleTheme(){
+  applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
+}
+applyTheme((() => {
+  try {
+    const q = new URLSearchParams(location.search).get("theme");
+    if (q === "light" || q === "dark") return q;
+    return localStorage.getItem("strata-lab-theme") || "dark";
+  } catch { return "dark"; }
+})());
+
+/* ------------------------------------------------------------------ tabs */
+function openTab(name){
+  S.tab = name;
+  document.querySelectorAll("#nav button").forEach(b => b.classList.toggle("on", b.dataset.tab === name));
+  document.querySelectorAll(".tab").forEach(t => t.classList.toggle("on", t.id === "tab-" + name));
+  try { history.replaceState(null, "", "#" + name); } catch {}
+  if (name === "dash") loadLive();
+  if (name === "models") loadScan();
+  if (name === "term") termEnter();
+  if (name === "history") loadHistory();
+  if (name === "bench") loadBench();
+  if (name === "logs") loadLogs();
+  if (name === "settings") loadSettings();
+}
+document.querySelectorAll("#nav button").forEach(b => b.onclick = () => openTab(b.dataset.tab));
+document.querySelectorAll("#scope-seg button").forEach(b => b.onclick = () => {
+  S.scope = b.dataset.scope;
+  document.querySelectorAll("#scope-seg button").forEach(x => x.classList.toggle("on", x === b));
+  renderStats();
+  renderChatStats();
+});
+
+/* ------------------------------------------------------------------ status */
+function stateChip(){
+  const s = S.status;
+  if (!s) return;
+  const running = !!(s.health && s.health.loaded);
+  const busy = !!S.activeJob;
+  const cls = busy ? "busy" : (running ? "ok" : "err");
+  const label = busy ? "处理中" : (running ? (s.health.model || "运行中") : "引擎未运行");
+  $("chip-state").innerHTML = '<i class="dot ' + cls + '"></i><span>' + esc(label) + "</span>";
+}
+
+async function loadStatus(){
+  const s = await api("/api/status");
+  S.status = s;
+  const running = !!(s.health && s.health.loaded);
+  // If the job this page is waiting for is not on the server any more (it restarted, or the
+  // job aged out of the ring), drop it — otherwise every 启动 button stays disabled.
+  if (S.activeJob){
+    const known = (s.jobs || []).some(j => j.id === S.activeJob.id);
+    const stale = Date.now() - S.activeJob.started > 10000;
+    if (!known && stale) clearActiveJob();
+  }
+  stateChip();
+  renderBanner();
+  renderEngine();
+  renderProfiles();
+  renderJobs(s.jobs || []);
+  renderChatStats();
+  $("chat-send").disabled = !running || !!S.activeJob;
+  if ($("btn-stop")) $("btn-stop").disabled = !running;
+}
+
+function renderBanner(){
+  const s = S.status, b = $("banner"), running = !!(s.health && s.health.loaded);
+  const freeMB = s.vram ? (s.vram.total - s.vram.used) : null;
+  let cls = "", text = "";
+  if (s.stale_markers && !running){
+    cls = "warn";
+    text = "<b>检测到上次强制结束留下的运行标记。</b>启动时会自动清理，不用手动删。";
+  } else if (running && s.comfy_port){
+    cls = "warn";
+    text = "<b>ComfyUI 正在跑（端口 " + s.comfy_port + "）。</b>它一加载模型就会和引擎抢显存——实测那种状态下 decode 会掉到个位数。跑长任务前先关掉它。";
+  } else if (running && freeMB !== null && freeMB < 1024){
+    cls = "info";
+    text = "<b>显存余量 " + freeMB + " MB。</b>256K 下这是常规状态（实测 75 tok/s 满速），引擎自己也会打同样的提示；真正会拖慢的是别的程序来抢显存。";
+  }
+  b.className = "banner" + (cls ? " show " + cls : "");
+  b.innerHTML = text;
+}
+
+function renderEngine(){
+  const s = S.status, h = s.health, m = S.meta || {};
+  const running = !!(h && h.loaded);
+  const eng = s.engine || {};
+  const activeProfile = (s.profiles || []).find(p => p.active);
+  $("engine-build").textContent = m.build || "";
+  $("eng-actions").innerHTML = running
+    ? '<button class="mini" onclick="runBench()">快速测速</button>'
+      + '<button class="mini" onclick="openTab(\'models\')">切换模型</button>'
+      + '<button class="mini danger" id="btn-stop" onclick="stopEngine()">停止引擎</button>'
+    : '<button class="primary" onclick="openTab(\'models\')">启动模型</button>';
+  $("engine-kv").innerHTML =
+    "<b>模型</b><span class=\"mono\">" + esc(running ? h.model : "—") + "</span>" +
+    "<b>上下文</b><span>" + (running ? Math.round(h.max_context/1024) + "K" : "—") + "</span>" +
+    "<b>槽位</b><span>" + (m.slots === undefined ? "—" : m.slots) +
+      " · parallel " + (activeProfile ? activeProfile.parallel : "—") + "</span>" +
+    "<b>采样</b><span>" + (m.temperature === undefined || m.temperature === null ? "—"
+      : "temp " + m.temperature + " · top_p " + m.top_p + " · top_k " + m.top_k) + "</span>" +
+    "<b>专家缓存</b><span>" + (eng.cache_hit === null || eng.cache_hit === undefined ? "—"
+      : num(eng.cache_hit) + "% 命中") + "</span>" +
+    "<b>运行时长</b><span>" + (S.stats && S.stats.run_started ? dur(Date.now()/1000 - S.stats.run_started) : "—") + "</span>";
+
+  const vramPct = s.vram ? Math.round(s.vram.used / s.vram.total * 100) : 0;
+  $("g-vram").textContent = s.vram
+    ? (s.vram.used/1024).toFixed(1) + " / " + (s.vram.total/1024).toFixed(0) + " GB · " + vramPct + "%"
+    : "—";
+  const bar = $("bar-vram");
+  bar.style.width = vramPct + "%";
+  bar.className = vramPct > 92 ? "hot" : "";
+  const ramFree = s.ram_free_gb;
+  const ramTotal = s.ram_total_gb || 64;
+  S.ramTotal = ramTotal;
+  const ramUsedPct = ramFree === undefined ? 0 : Math.max(0, Math.min(100, (ramTotal - ramFree) / ramTotal * 100));
+  $("g-ram").textContent = ramFree === undefined ? "—" : (ramTotal - ramFree).toFixed(1) + " / " + ramTotal.toFixed(0) + " GB · " + ramUsedPct.toFixed(0) + "%";
+  $("bar-ram").style.width = ramUsedPct.toFixed(0) + "%";
+}
+
+function profileHTML(p){
+  const busy = !!S.activeJob;
+  const btn = p.ready
+    ? '<button class="primary go" onclick="startEngine(\'' + p.id + '\')" ' + (p.active || busy ? "disabled" : "") + ">"
+      + (p.active ? "正在运行" : "启动 " + esc(p.title)) + "</button>"
+    : '<div class="mute warnc">分片 1 未就绪 · ' + fmtSize(p.have_bytes) + " / " + fmtSize(p.need_bytes) + "</div>";
+  return '<div class="profile ' + (p.active ? "active" : "") + '">' +
+    '<div class="head"><b>' + esc(p.title) + '</b><span class="tag">' + esc(p.model_label) + "</span>" +
+      '<span class="tag">' + Math.round(p.ctx/1024) + "K</span>" +
+      (p.active ? '<span class="tag cur">当前</span>' : "") + "</div>" +
+    '<div class="desc">' + esc(p.desc) + "</div>" +
+    '<div class="meta">' + esc(p.speed) + " · kv " + esc(p.kv) + "</div>" + btn + "</div>";
+}
+function renderProfiles(){
+  const s = S.status;
+  if (!s) return;
+  $("model-profiles").innerHTML = s.profiles.map(profileHTML).join("");
+}
+
+function renderJobs(jobs){
+  S.jobs = jobs;
+  $("jobs").innerHTML = jobs.length ? jobs.map(j => {
+    const d = (j.detail || "").split("\n").pop().slice(0, 90);
+    return '<div class="job"><span class="st ' + j.state + '">' + j.state + "</span>" +
+      '<span class="t">' + esc(j.title || j.kind) + "</span>" +
+      '<span class="d">' + esc(d) + "</span>" +
+      '<span class="when">' + ago(j.finished || j.started) + "</span></div>";
+  }).join("") : '<div class="job"><span class="d">还没有任务</span></div>';
+}
+
+/* ------------------------------------------------------------------ live request */
+function renderLive(){
+  const l = S.live || {}, state = l.state || "unavailable";
+  const queued = Number(l.queued) || 0;
+  const active = state === "reading" || state === "generating";
+  const cell = (k, v, s) => '<div><div class="k">' + k + '</div><div class="v">' + v
+    + '</div><div class="s">' + s + '</div></div>';
+  const speed = l.tok_s === null || l.tok_s === undefined ? l.tok_s_mean : l.tok_s;
+  const readCell = cell("读取速度", num(l.prefill_tok_s_mean) + "<small>tok/s</small>",
+                        active ? "本次预填" : "等待请求");
+  const generateCell = cell("生成速度", state === "generating" ? num(speed) + "<small>tok/s</small>" : "—",
+                            state === "generating" ? "平均 " + num(l.tok_s_mean) + " tok/s" : "尚未开始");
+  let label, progressCell;
+  if (state === "reading"){
+    label = "预填中";
+    progressCell = cell("读取进度", nf(l.prompt_read) + "<small>tok</small>",
+                        (l.prompt_total ? "总计 " + nf(l.prompt_total) + " tok" : "分块读取")
+                        + " · " + dur(l.elapsed_s));
+  } else if (state === "generating"){
+    label = "生成中";
+    progressCell = cell("已生成", nf(l.generated) + "<small>tok</small>",
+                        "上限 " + nf(l.max_tokens) + " tok · 已用 " + dur(l.elapsed_s));
+  } else if (queued > 0){
+    label = "排队 " + queued;
+    progressCell = cell("等待请求", nf(queued), "单 slot 排队");
+  } else {
+    label = state === "idle" ? "空闲" : (state === "error" ? "异常" : "不可用");
+    progressCell = cell("当前状态", state === "idle" ? "空闲" : "—",
+                        state === "idle" ? "等待请求 · 排队 " + nf(queued) : "引擎没有返回实时数据");
+  }
+  $("live-state").textContent = label;
+  $("live-state").style.color = active ? "var(--ok)" : "";
+  $("live-speed").innerHTML = readCell + generateCell + progressCell;
+  drawLiveChart();
+}
+async function loadLive(){
+  if (S.tab !== "dash" || document.hidden || LIVE.inFlight) return;
+  LIVE.inFlight = true;
+  try {
+    S.live = await api("/api/live");
+  } catch {
+    S.live = { state:"unavailable" };
+  } finally {
+    LIVE.inFlight = false;
+  }
+  renderLive();
+}
+
+/* ------------------------------------------------------------------ stats */
+async function loadStats(){
+  try {
+    const res = await Promise.all([api("/api/stats"), api("/api/conn"), api("/api/meta")]);
+    S.stats = res[0]; S.conn = res[1]; S.meta = res[2];
+    renderStats();
+    renderEndpoints();
+    renderApps();
+    if (S.status) { renderEngine(); renderChatStats(); }
+  } catch (e) { /* first paint can race the server */ }
+}
+
+// DeepSeek Flash official peak prices per 1M tokens, checked 2026-10-24.
+// USD: https://api-docs.deepseek.com/quick_start/pricing
+// CNY: https://api-docs.deepseek.com/zh-cn/quick_start/pricing (off-peak is half price).
+const DEEPSEEK_FLASH_PEAK = {
+  usd: { cacheHit:0.006, cacheMiss:0.3, output:1.2 },
+  cny: { cacheHit:0.04, cacheMiss:2, output:8 },
+};
+function deepseekSavings(d, prices){
+  const prompt = Number(d.prompt) || 0, reused = Number(d.reused) || 0;
+  const uncached = Math.max(0, prompt - reused), generated = Number(d.gen) || 0;
+  return (reused * prices.cacheHit + uncached * prices.cacheMiss + generated * prices.output) / 1e6;
+}
+function usd(n){ return "$" + n.toFixed(n > 0 && n < 0.1 ? 3 : 2); }
+function cny(n){ return "¥" + n.toFixed(n > 0 && n < 0.1 ? 3 : 2); }
+function renderStats(){
+  const st = S.stats;
+  if (!st) return;
+  const d = st[S.scope] || st.run;
+  const savingsUsd = deepseekSavings(d, DEEPSEEK_FLASH_PEAK.usd);
+  const savingsCny = deepseekSavings(d, DEEPSEEK_FLASH_PEAK.cny);
+  $("stats-src").textContent = st.log ? st.log + " · " + d.requests + " 次请求" : "没有引擎日志";
+  $("kpi-main").innerHTML =
+    '<div class="kpi"><div class="k">已处理 token</div><div class="v">' + compact(d.prompt) + "</div>" +
+      '<div class="s">提示词 ' + compact(d.prompt) + " + 生成 " + compact(d.gen) + " = " + compact(d.tokens) + "</div></div>" +
+    '<div class="kpi"><div class="k">复用 token</div><div class="v">' + compact(d.reused) + "</div>" +
+      '<div class="s">前缀命中免于重算 · 实算 ' + compact(d.read) + "</div></div>" +
+    '<div class="kpi"><div class="k">缓存效率</div><div class="v">' +
+      (d.cache_eff === null ? "—" : num(d.cache_eff) + "<small>%</small>") + "</div>" +
+      '<div class="s">复用 / 全部提示词 token</div></div>' +
+    '<div class="kpi" title="DeepSeek Flash 官方峰值价。美元：命中输入 $0.006/M、未命中输入 $0.3/M、输出 $1.2/M；人民币：命中输入 0.04元/M、未命中输入 2元/M、输出 8元/M。非峰值减半；两种货币分别按官方报价计算，不用汇率换算。仅为 API 等价估算，不含硬件、电费及其他费用。">' +
+      '<div class="k">估算节省（DeepSeek）</div><div class="v">' + usd(savingsUsd)
+        + ' / ' + cny(savingsCny) + "</div>" +
+      '<div class="s">Flash 官方峰值价 · 非实际账单</div></div>';
+
+  $("speed-hint").textContent = S.scope === "run" ? "本次引擎运行" : "该日志里的全部请求";
+  $("speed").innerHTML =
+    '<div><div class="k">预填速度（不含缓存）</div><div class="v">' + num(d.prefill_tps) + "<small>tok/s</small></div>" +
+      '<div class="s">' + compact(d.read) + " token 实算</div></div>" +
+    '<div><div class="k">生成速度</div><div class="v">' + num(d.decode_tps) + "<small>tok/s</small></div>" +
+      '<div class="s">' + compact(d.gen) + " token · 平均 " + num(d.avg_seconds) + " s/请求</div></div>" +
+    '<div><div class="k">投机命中</div><div class="v">' +
+      (d.draft_rate === null ? "—" : num(d.draft_rate) + "<small>%</small>") + "</div>" +
+      '<div class="s">MTP 草稿被接受的比例</div></div>';
+}
+
+function renderEndpoints(){
+  const c = S.conn;
+  if (!c) return;
+  const model = c.model || "模型名";
+  const curl = "curl " + c.v1 + '/chat/completions -H "content-type: application/json" -d \'{"model":"'
+    + model + '","messages":[{"role":"user","content":"hi"}]}\'';
+  const rows = [
+    ["OpenAI", c.v1],
+    ["Anthropic", c.anthropic],
+    ["模型名", c.model || "（引擎未运行）"],
+    ["健康检查", c.health]
+  ];
+  let html = rows.map(r => '<div class="row"><span class="label">' + r[0] + "</span>" +
+    "<code>" + esc(r[1]) + '</code><button class="copy" data-copy="' + esc(r[1]) + '" onclick="copyText(this.dataset.copy, this)">复制</button></div>').join("");
+  html += '<div class="row"><span class="label">curl</span><code>' + esc(curl) + "</code>" +
+    '<button class="copy" data-copy="' + esc(curl) + '" onclick="copyText(this.dataset.copy, this)">复制</button></div>';
+  $("endpoints").innerHTML = html;
+}
+
+function renderApps(){
+  const c = S.conn;
+  if (!c || !c.apps) return;
+  const initials = { "deepseek-harness":"D", "pi":"π", "kimi":"K", "claude-code":"C", "opencode":"O", "codex":"X" };
+  $("apps").innerHTML = c.apps.map(a =>
+    '<div class="app ' + (a.configured ? "on" : "") + '">' +
+      '<span class="ic">' + (initials[a.id] || a.name[0]) + "</span>" +
+      '<span class="who"><b>' + esc(a.name) + "</b><span>" + esc(a.sub) + "</span></span>" +
+      "<code title=\"" + esc(a.config_path) + "\">" + esc(a.cmd) + "</code>" +
+      '<span class="pill ' + (a.configured ? "ok" : "") + '">' + (a.configured ? "已配置" : "未配置") + "</span>" +
+      '<button class="copy" data-copy="' + esc(a.cmd) + '" onclick="copyText(this.dataset.copy, this)">复制</button>' +
+    "</div>").join("");
+}
+
+/* ------------------------------------------------------------------ charts */
+function drawLivePanel(c, W, y, h, label, values, color){
+  const padL = 6, padR = 6, padT = 22, padB = 7;
+  const data = Array.isArray(values) ? values.map(Number) : [];
+  const valid = data.filter(Number.isFinite);
+  const last = data.length ? data[data.length - 1] : null;
+  const peak = valid.length ? Math.max.apply(null, valid) : 0;
+  const max = Math.max(10, peak * 1.12);
+  const grid = cssVar("--line") || "#23262f";
+  const mute = cssVar("--mute") || "#6f7787";
+  c.fillStyle = mute;
+  c.font = "11px " + (cssVar("--mono") || "monospace");
+  c.textAlign = "left";
+  c.fillText(label + " " + num(last) + " tok/s", padL, y + 12);
+  c.textAlign = "right";
+  c.fillText("峰值 " + num(peak), W - padR, y + 12);
+  c.textAlign = "left";
+  c.strokeStyle = grid;
+  c.lineWidth = 1;
+  c.beginPath();
+  c.moveTo(padL, y + h - padB);
+  c.lineTo(W - padR, y + h - padB);
+  c.stroke();
+  if (!data.length) return;
+  c.strokeStyle = color;
+  c.lineWidth = 1.8;
+  c.lineJoin = "round";
+  c.lineCap = "round";
+  c.beginPath();
+  let started = false;
+  data.forEach((v, i) => {
+    if (!Number.isFinite(v)) { started = false; return; }
+    const x = padL + (W - padL - padR) * (data.length > 1 ? i / (data.length - 1) : 1);
+    const yy = y + padT + (h - padT - padB) * (1 - Math.max(0, v) / max);
+    if (!started) { c.moveTo(x, yy); started = true; }
+    else c.lineTo(x, yy);
+  });
+  c.stroke();
+}
+function drawLiveChart(){
+  const history = (S.live && S.live.history) || {};
+  const charts = [
+    ["prefill-chart", "Prefill", history.prefill_tok_s_mean, cssVar("--accent") || "#6f9bff"],
+    ["decode-chart", "Decode", history.tok_s, cssVar("--ok") || "#35c98a"],
+  ];
+  for (const [id, label, values, color] of charts){
+    const cv = $(id);
+    if (!cv || !cv.clientWidth) continue;
+    const dims = sizeCanvas(cv, 180);
+    dims.c.clearRect(0, 0, dims.W, dims.H);
+    drawLivePanel(dims.c, dims.W, 0, dims.H, label, values, color);
+  }
+}
+function sizeCanvas(cv, fallbackH){
+  const dpr = window.devicePixelRatio || 1;
+  const w = cv.clientWidth || 640;
+  const h = cv.clientHeight || fallbackH || 118;
+  if (cv.width !== Math.round(w*dpr) || cv.height !== Math.round(h*dpr)){
+    cv.width = Math.round(w*dpr);
+    cv.height = Math.round(h*dpr);
+  }
+  const c = cv.getContext("2d");
+  c.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return { c: c, W: w, H: h };
+}
+
+function drawSpark(){
+  const cv = $("spark");
+  if (!cv || !cv.clientWidth) return;
+  const dims = sizeCanvas(cv, 118), c = dims.c, W = dims.W, H = dims.H;
+  const padL = 6, padR = 6, padT = 26, padB = 6;
+  c.clearRect(0, 0, W, H);
+  const grid = cssVar("--line") || "#23262f";
+  const green = cssVar("--ok") || "#35c98a";
+  const blue = cssVar("--accent") || "#6f9bff";
+  const mute = cssVar("--mute") || "#6f7787";
+  const mono = cssVar("--mono") || "monospace";
+  const series = (S.metrics || []).filter(p => p.vram !== null && p.vram !== undefined);
+
+  for (let k = 0; k <= 3; k++){
+    const y = padT + (H - padT - padB) * k / 3;
+    c.strokeStyle = grid; c.lineWidth = 1;
+    c.beginPath(); c.moveTo(padL, y); c.lineTo(W - padR, y); c.stroke();
+  }
+  if (!series.length){
+    c.fillStyle = mute; c.font = "12px " + (cssVar("--sans") || "sans-serif");
+    c.fillText("采样中…", padL + 4, H/2);
+    return;
+  }
+  const maxV = Math.max.apply(null, series.map(s => s.vram_total || s.vram || 1)) || 1;
+  const maxR = S.ramTotal || 64;
+  const n = series.length;
+  const x = i => padL + (W - padL - padR) * (n > 1 ? i / (n - 1) : 1);
+  const yv = v => H - padB - (H - padT - padB) * (v / maxV);
+  const yr = v => H - padB - (H - padT - padB) * (v / maxR);
+
+  c.lineJoin = "round"; c.lineCap = "round";
+  c.strokeStyle = green; c.lineWidth = 1.9; c.beginPath();
+  series.forEach((s, i) => i ? c.lineTo(x(i), yv(s.vram || 0)) : c.moveTo(x(i), yv(s.vram || 0)));
+  c.stroke();
+  c.strokeStyle = blue; c.lineWidth = 1.4; c.beginPath();
+  series.forEach((s, i) => i ? c.lineTo(x(i), yr(s.ram || 0)) : c.moveTo(x(i), yr(s.ram || 0)));
+  c.stroke();
+
+  const last = series[n - 1];
+  c.font = "11px " + mono;
+  c.fillStyle = green; c.beginPath(); c.arc(padL + 3, 11, 3, 0, 7); c.fill();
+  c.fillText("显存 " + ((last.vram || 0)/1024).toFixed(1) + " / " + (maxV/1024).toFixed(0) + " GB", padL + 11, 15);
+  const lw = c.measureText("显存 " + ((last.vram || 0)/1024).toFixed(1) + " / " + (maxV/1024).toFixed(0) + " GB").width;
+  c.fillStyle = blue; c.beginPath(); c.arc(padL + lw + 24, 11, 3, 0, 7); c.fill();
+  c.fillStyle = mute; c.fillText("空闲内存 " + (last.ram || 0).toFixed(1) + " / " + maxR.toFixed(0) + " GB", padL + lw + 32, 15);
+}
+
+async function loadMetrics(){
+  try {
+    const m = await api("/api/metrics");
+    S.metrics = m.series || [];
+    if (S.tab === "dash") drawSpark();
+  } catch {}
+}
+
+/* ------------------------------------------------------------------ jobs */
+function clearActiveJob(){
+  clearInterval(S.poll);
+  S.poll = null;
+  S.activeJob = null;
+  const stop = $("chat-stop");
+  if (stop) stop.disabled = true;
+  renderProfiles();
+}
+
+function beginJob(job){
+  S.activeJob = { id: job.id, kind: job.kind, started: Date.now() };
+  $("chat-stop").disabled = false;
+  clearInterval(S.poll);
+  S.poll = setInterval(pollJob, 900);
+}
+async function pollJob(){
+  if (!S.activeJob) return;
+  let jobs;
+  try { jobs = (await api("/api/progress")).jobs; } catch { return; }
+  const job = jobs.find(j => j.id === S.activeJob.id);
+  if (!job){
+    // The server restarted (or the job fell out of its ring). Before this check the page
+    // waited forever, which left every 启动 button disabled.
+    clearActiveJob();
+    loadStatus().catch(() => {});
+    return;
+  }
+  if (Date.now() - S.activeJob.started > 6 * 60 * 1000 && job.state === "running"){
+    clearActiveJob();
+    toast("任务超过 6 分钟没有结论，已解除锁定", true);
+    loadStatus().catch(() => {});
+    return;
+  }
+  renderJobs(jobs.slice(0, 6));
+  if (S.activeJob.kind === "chat" && job.text !== undefined) renderChat(job);
+  if (job.state === "running") return;
+
+  clearInterval(S.poll);
+  const kind = S.activeJob.kind;
+  S.activeJob = null;
+  $("chat-stop").disabled = true;
+  if (kind === "bench"){
+    $("bench-result").textContent = job.state === "ready"
+      ? "decode " + job.result.tps + " tok/s · " + job.result.tokens + " tok / " + job.result.seconds + "s"
+        + (job.result.ttft_ms ? " · 首字 " + job.result.ttft_ms + " ms" : "")
+        + (job.result.cached ? " · 缓存 " + job.result.cached : "")
+      : (job.detail || job.state);
+    loadBench();
+  } else if (kind === "chat"){
+    finishChat(job);
+  } else if (kind === "start"){
+    toast(job.state === "ready" ? "引擎已就绪" : (job.detail || job.state), job.state !== "ready");
+  } else if (kind === "download"){
+    toast(job.state === "ready" ? "下载完成" : (job.detail || job.state), job.state !== "ready");
+    loadScan();
+  }
+  loadStatus().catch(() => {});
+  loadStats();
+}
+async function cancelJob(){
+  if (!S.activeJob) return;
+  await api("/api/cancel", { method:"POST", body: JSON.stringify({ id: S.activeJob.id }) });
+  toast("已请求放弃");
+}
+
+/* ------------------------------------------------------------------ actions */
+async function startEngine(id){
+  const s = S.status;
+  const active = s && s.profiles ? s.profiles.find(p => p.active) : null;
+  const switching = !!(active && active.id !== id);
+  try {
+    const post = force => api("/api/start", {
+      method: "POST", body: JSON.stringify({ id: id, force: force })
+    });
+    let r = await post(switching);
+    if (r.job.state === "failed" && (r.job.detail || "").indexOf("已有别的模型") >= 0){
+      r = await post(true);
+    }
+    if (r.job.state === "failed"){
+      toast(r.job.detail || "启动失败", true);
+      return;
+    }
+    beginJob({ id: r.job.id, kind: "start" });
+    toast(switching
+      ? "正在切换 " + active.title + " → " + id + "：先停引擎，再加载（约 40–90 秒）"
+      : "开始启动 " + id + "（约 40–90 秒）");
+  } catch (e){
+    const d = e.data || {};
+    if ((d.error || "").indexOf("未就绪") >= 0){
+      toast("模型文件未就绪：" + fmtSize(d.have_bytes) + " / " + fmtSize(d.need_bytes), true);
+    } else toast(e.message, true);
+  }
+}
+async function stopEngine(){
+  if (!confirm("停止引擎？正在使用 8080 的客户端会断开。")) return;
+  await api("/api/stop", { method:"POST" });
+  toast("已发送停止指令");
+  setTimeout(() => { loadStatus().catch(() => {}); loadStats(); }, 2500);
+}
+async function quitConsole(stopEngineToo){
+  const msg = stopEngineToo
+    ? "退出控制台，并停止 Strata 引擎？\n\nDSH / pi / Kimi Code 会断开。"
+    : "只退出控制台？\n\n引擎继续跑，其它客户端不受影响。";
+  if (!confirm(msg)) return;
+  try { await api("/api/quit", { method:"POST", body: JSON.stringify({ stop_engine: !!stopEngineToo }) }); } catch {}
+  clearInterval(S.poll);
+  document.body.innerHTML = '<div style="padding:48px;font:14px/2 \'Microsoft YaHei UI\',sans-serif;color:#8b909b">' +
+    '<div style="font-size:18px;color:#e6e9ef;margin-bottom:10px">控制台已退出</div>' +
+    (stopEngineToo ? "Strata 引擎也已停止。" : "Strata 引擎仍在运行。") +
+    '<br />可以关掉这个窗口；需要时再双击 <b>StrataLab.cmd</b> 打开。</div>';
+}
+async function runBench(){
+  try {
+    const r = await api("/api/bench", { method:"POST", body: JSON.stringify({
+      prompt: ($("bench-prompt").value || "").trim() || undefined,
+      max_tokens: parseInt($("bench-max").value || "200", 10),
+      effort: $("bench-effort").value
+    }) });
+    beginJob({ id: r.job.id, kind: "bench" });
+    $("bench-result").textContent = "测速中…";
+    if (S.tab !== "bench") openTab("bench");
+  } catch (e){ toast(e.message, true); }
+}
+
+/* ------------------------------------------------------------------ chat */
+function renderChat(job){
+  let el = document.querySelector(".msg.bot.stream");
+  if (!el){
+    el = document.createElement("div");
+    el.className = "msg bot stream";
+    el.innerHTML = '<div class="meta">模型 · 生成中</div><div class="body"></div>';
+    $("chatlog").appendChild(el);
+  }
+  el.querySelector(".body").textContent = job.text || "";
+  el.querySelector(".meta").textContent = "模型 · " + (job.tokens || 0) + " tok"
+    + (job.result ? " · " + job.result.tps + " tok/s" : " · 生成中");
+  $("chatlog").scrollTop = $("chatlog").scrollHeight;
+}
+function finishChat(job){
+  const el = document.querySelector(".msg.bot.stream");
+  if (el) el.classList.remove("stream");
+  if (el && job.state !== "ready"){
+    el.querySelector(".meta").textContent = "失败：" + (job.detail || job.state);
+  } else if (el && job.result){
+    el.querySelector(".meta").textContent =
+      job.result.tps + " tok/s · " + job.result.tokens + " tok / " + job.result.seconds + "s"
+      + (job.result.ttft_ms ? " · 首字 " + job.result.ttft_ms + " ms" : "")
+      + (job.result.cached ? " · 缓存 " + job.result.cached : "");
+  }
+  S.chatBusy = false;
+  $("chat-send").disabled = !(S.status && S.status.health && S.status.health.loaded);
+  $("chat-hint").textContent = "";
+  $("chatlog").scrollTop = $("chatlog").scrollHeight;
+}
+async function sendChat(){
+  const prompt = $("chat-input").value.trim();
+  if (!prompt) return;
+  if (!(S.status && S.status.health && S.status.health.loaded)) { toast("引擎没运行", true); return; }
+  S.chatBusy = true;
+  $("chat-send").disabled = true;
+  $("chat-hint").textContent = "生成中…";
+  const el = document.createElement("div");
+  el.className = "msg user"; el.textContent = prompt;
+  $("chatlog").appendChild(el);
+  $("chat-input").value = "";
+  $("chatlog").scrollTop = $("chatlog").scrollHeight;
+  try {
+    const r = await api("/api/chat", { method:"POST", body: JSON.stringify({
+      prompt: prompt,
+      max_tokens: parseInt($("chat-max").value || "1024", 10),
+      effort: $("chat-effort").value,
+      system: ($("chat-system").value || "").trim() || undefined
+    }) });
+    beginJob({ id: r.job.id, kind: "chat" });
+  } catch (e){
+    toast(e.message, true); S.chatBusy = false; $("chat-send").disabled = false;
+  }
+}
+function clearChat(){ $("chatlog").innerHTML = ""; }
+function renderChatStats(){
+  const s = S.status;
+  if (!s) return;
+  const eng = s.engine || {}, st = S.stats;
+  const d = st && (st[S.scope] || st.run);
+  $("chat-stats").innerHTML =
+    '<b>引擎</b><span class="mono">' + (s.health ? esc(s.health.model) : "未运行") + "</span>" +
+    "<b>上下文</b><span>" + (s.health ? Math.round(s.health.max_context/1024) + "K" : "—") + "</span>" +
+    "<b>decode</b><span>" + (eng.decode_tps === null || eng.decode_tps === undefined ? "—" : num(eng.decode_tps) + " tok/s") + "</span>" +
+    "<b>缓存命中</b><span>" + (eng.cache_hit === null || eng.cache_hit === undefined ? "—" : num(eng.cache_hit) + "%") + "</span>" +
+    "<b>本页累计</b><span>" + (d ? d.requests + " 次请求" : "—") + "</span>";
+}
+$("chat-input").addEventListener("keydown", e => {
+  if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); sendChat(); }
+});
+
+/* ------------------------------------------------------------------ models */
+async function loadScan(){
+  try {
+    const d = await api("/api/scan");
+    $("scan-tag").textContent = d.models.length + " 个目录";
+    $("scan-table").innerHTML = "<tr><th>目录</th><th>gguf</th><th>合计</th><th>状态</th></tr>" +
+      d.models.map(m => "<tr><td class=\"mono\">" + esc(m.name) + "</td><td>" + m.files + "</td><td>"
+        + fmtSize(m.total_bytes) + "</td><td>"
+        + (m.incomplete ? '<span class="warnc">未完成' + (m.parts ? " · " + m.parts + " 个分片" : "") + "</span>"
+                        : '<span class="okc">完整</span>') + "</td></tr>").join("");
+    const s = S.status || await api("/api/status");
+    const missing = s.profiles.filter(p => !p.ready);
+    $("dl-profile").innerHTML = missing.length
+      ? missing.map(p => '<option value="' + p.id + '">' + esc(p.title) + " · 缺 "
+          + fmtSize(p.need_bytes - p.have_bytes) + "</option>").join("")
+      : '<option value="">全部档位已就绪</option>';
+  } catch (e){ toast(e.message, true); }
+}
+async function startDownload(){
+  const id = $("dl-profile").value;
+  if (!id) return;
+  if (!confirm("从 hf-mirror 下载该档位的首个分片？文件很大，可以随时放弃并续传。")) return;
+  try {
+    const r = await api("/api/download", { method:"POST", body: JSON.stringify({ id }) });
+    beginJob({ id: r.job.id, kind: "download" });
+    $("dl-progress").textContent = "开始下载…";
+    const t = setInterval(async () => {
+      try {
+        const jobs = (await api("/api/progress")).jobs;
+        const j = jobs.find(x => x.id === r.job.id);
+        if (!j) return;
+        $("dl-progress").textContent = fmtSize(j.bytes) + " / " + fmtSize(j.total)
+          + (j.speed ? " · " + j.speed + " MB/s" : "") + " · " + j.state;
+        if (j.state !== "running") clearInterval(t);
+      } catch { clearInterval(t); }
+    }, 1000);
+  } catch (e){ toast(e.message, true); }
+}
+
+/* ------------------------------------------------------------------ history / bench */
+async function loadHistory(){
+  try {
+    const d = await api("/api/history?limit=100");
+    const items = d.items || [];
+    S.histItems = items;
+    $("hist-table").innerHTML = "<tr><th>时间</th><th>类型</th><th></th><th>tok/s</th><th>tokens</th><th>首字</th><th>备注</th></tr>" +
+      items.map(it => {
+        const t = new Date(it.ts * 1000).toLocaleString("zh-CN", { hour12: false });
+        return "<tr><td class=\"mono\">" + t + "</td><td>" + esc(it.kind) + "</td><td>"
+          + (it.ok ? '<span class="okc">✓</span>' : '<span class="errc">✗</span>') + "</td><td>"
+          + (it.tps || "") + "</td><td>" + (it.tokens || "") + "</td><td>" + (it.ttft_ms || "")
+          + '</td><td class="note">' + esc(it.note || "") + "</td></tr>";
+      }).join("");
+    drawHist();
+  } catch (e){ toast(e.message, true); }
+}
+function drawHist(){
+  const cv = $("hist-spark");
+  if (!cv || !cv.clientWidth) return;
+  const dims = sizeCanvas(cv, 200), c = dims.c, W = dims.W, H = dims.H;
+  const padL = 10, padR = 10, padT = 24, padB = 8;
+  c.clearRect(0, 0, W, H);
+  const line = cssVar("--line") || "#23262f";
+  const accent = cssVar("--accent") || "#6f9bff";
+  const mute = cssVar("--mute") || "#6f7787";
+  const items = (S.histItems || []).filter(i => i.ok && i.tps).slice(0, 60).reverse();
+  for (let k = 0; k <= 3; k++){
+    const y = padT + (H - padT - padB) * k / 3;
+    c.strokeStyle = line; c.lineWidth = 1;
+    c.beginPath(); c.moveTo(padL, y); c.lineTo(W - padR, y); c.stroke();
+  }
+  if (!items.length){
+    c.fillStyle = mute; c.font = "12px " + (cssVar("--sans") || "sans-serif");
+    c.fillText("还没有测速记录", padL + 4, H/2);
+    return;
+  }
+  const max = Math.max.apply(null, items.map(i => i.tps)) * 1.15;
+  const n = items.length;
+  const x = i => padL + (W - padL - padR) * (n > 1 ? i / (n - 1) : 0.5);
+  const y = v => H - padB - (H - padT - padB) * (v / max);
+  c.strokeStyle = accent; c.lineWidth = 1.8; c.lineJoin = "round"; c.beginPath();
+  items.forEach((it, i) => i ? c.lineTo(x(i), y(it.tps)) : c.moveTo(x(i), y(it.tps)));
+  c.stroke();
+  c.fillStyle = accent;
+  items.forEach((it, i) => { c.beginPath(); c.arc(x(i), y(it.tps), 2.4, 0, 7); c.fill(); });
+  c.fillStyle = mute; c.font = "11px " + (cssVar("--mono") || "monospace");
+  c.fillText("峰值 " + items.reduce((a, b) => Math.max(a, b.tps), 0).toFixed(0) + " tok/s · " + n + " 次", padL, 14);
+}
+function exportCsv(){ window.location = "/api/history?limit=300&csv=1"; }
+async function clearHistory(){
+  if (!confirm("清空 history.json 里的所有记录？")) return;
+  await api("/api/history/clear", { method:"POST" });
+  toast("已清空");
+  loadHistory();
+}
+async function loadBench(){
+  try {
+    const d = await api("/api/history?limit=100");
+    const rows = (d.items || []).filter(i => i.kind === "bench" || i.kind === "chat").slice(0, 12);
+    $("bench-table").innerHTML = "<tr><th>时间</th><th>类型</th><th>tok/s</th><th>tokens</th><th>首字</th><th>缓存</th></tr>" +
+      rows.map(it => {
+        const t = new Date(it.ts * 1000).toLocaleString("zh-CN", { hour12: false });
+        return "<tr><td class=\"mono\">" + t + "</td><td>" + esc(it.kind) + "</td><td>" + (it.tps || "")
+          + "</td><td>" + (it.tokens || "") + "</td><td>" + (it.ttft_ms || "")
+          + "</td><td>" + (it.cached || "") + "</td></tr>";
+      }).join("");
+  } catch {}
+}
+
+/* ------------------------------------------------------------------ logs */
+let logFilesLoaded = false;
+async function loadLogs(force){
+  try {
+    if (!logFilesLoaded || force){
+      const d = await api("/api/logfiles");
+      const cur = $("log-file").value;
+      $("log-file").innerHTML = d.files.map(f =>
+        '<option value="' + esc(f.name) + '" ' + (f.name === cur ? "selected" : "") + ">"
+        + esc(f.name) + " · " + f.kb + " KB</option>").join("");
+      logFilesLoaded = true;
+    }
+    const file = $("log-file").value;
+    const grep = $("log-grep").value.trim();
+    const q = new URLSearchParams();
+    if (file) q.set("file", file);
+    if (grep) q.set("grep", grep);
+    const d = await api("/api/logs?" + q.toString());
+    const box = $("logbox");
+    const stick = $("log-follow").checked;
+    box.textContent = d.lines.join("\n");
+    if (stick) box.scrollTop = box.scrollHeight;
+  } catch {}
+}
+
+/* ------------------------------------------------------------------ settings */
+async function loadSettings(){
+  try {
+    const res = await Promise.all([api("/api/conn"), api("/api/profiles")]);
+    const c = res[0], p = res[1];
+    $("conn").innerHTML =
+      '<b>Base URL</b><span class="mono">' + esc(c.v1) + "</span>" +
+      '<b>Anthropic</b><span class="mono">' + esc(c.anthropic) + "</span>" +
+      '<b>模型</b><span class="mono">' + esc(c.model || "—") + "</span>" +
+      "<b>上下文</b><span>" + (c.ctx ? Math.round(c.ctx/1024) + "K" : "—") + "</span>" +
+      "<b>构建</b><span>" + esc(c.build || "—") + "</span>" +
+      '<b>API Key</b><span class="muted">' + esc(c.key) + "</span>";
+    $("settings-profiles").innerHTML = Object.keys(p.profiles).map(id => {
+      const pr = p.profiles[id];
+      return '<div class="profile"><div class="head"><b>' + esc(pr.title) + '</b><span class="tag">' + esc(id) + "</span></div>" +
+        '<div class="btnrow" style="margin-top:6px">' +
+        '<label class="inline">ctx <input class="set-ctx" data-id="' + id + '" type="number" value="' + pr.ctx + '" step="1024" style="width:104px" /></label>' +
+        '<label class="inline">kv <select class="set-kv" data-id="' + id + '">' +
+          ["k8v4","int8","q4_0"].map(k => "<option " + (pr.kv === k ? "selected" : "") + ">" + k + "</option>").join("") +
+        "</select></label>" +
+        '<label class="inline">vision <select class="set-vision" data-id="' + id + '">' +
+          ["cpu","off","gpu"].map(v => "<option " + (pr.vision === v ? "selected" : "") + ">" + v + "</option>").join("") +
+        "</select></label>" +
+        '<label class="inline">parallel <input class="set-parallel" data-id="' + id + '" type="number" min="1" max="4" value="' + pr.parallel + '" style="width:62px" /></label>' +
+        "</div></div>";
+    }).join("");
+  } catch (e){ toast(e.message, true); }
+}
+async function saveProfiles(){
+  const out = {};
+  document.querySelectorAll(".set-ctx").forEach(el => {
+    out[el.dataset.id] = out[el.dataset.id] || {};
+    out[el.dataset.id].ctx = parseInt(el.value, 10);
+  });
+  document.querySelectorAll(".set-kv").forEach(el => { out[el.dataset.id].kv = el.value; });
+  document.querySelectorAll(".set-vision").forEach(el => { out[el.dataset.id].vision = el.value; });
+  document.querySelectorAll(".set-parallel").forEach(el => { out[el.dataset.id].parallel = parseInt(el.value, 10); });
+  try {
+    await api("/api/profiles", { method:"POST", body: JSON.stringify({ profiles: out }) });
+    toast("已保存到 profiles.json（下次启动生效）");
+    loadStatus().catch(() => {});
+  } catch (e){ toast(e.message, true); }
+}
+
+/* ------------------------------------------------------------------ terminal */
+function termTheme(){
+  const dark = document.documentElement.dataset.theme === "dark";
+  return dark
+    ? { background:"#0e1015", foreground:"#e6ebf5", cursor:"#6f9bff", cursorAccent:"#0e1015",
+        selectionBackground:"#2b3a56", black:"#1b1f27", red:"#ef6b6b", green:"#35c98a",
+        yellow:"#f0a94a", blue:"#6f9bff", magenta:"#c58bff", cyan:"#5fd7d7", white:"#e6ebf5",
+        brightBlack:"#4c5568", brightRed:"#ff8f8f", brightGreen:"#63e6ad", brightYellow:"#ffc470",
+        brightBlue:"#9ab8ff", brightMagenta:"#d9b3ff", brightCyan:"#8fe8e8", brightWhite:"#ffffff" }
+    : { background:"#ffffff", foreground:"#16181d", cursor:"#2c48c0", cursorAccent:"#ffffff",
+        selectionBackground:"#cfe0ff", black:"#16181d", red:"#b23a3a", green:"#127a55",
+        yellow:"#9a6412", blue:"#2c48c0", magenta:"#7a3fb5", cyan:"#0f6f6f", white:"#3c4048",
+        brightBlack:"#6a6f7a", brightRed:"#d04a4a", brightGreen:"#0f6b4a", brightYellow:"#7d520f",
+        brightBlue:"#1f36a0", brightMagenta:"#5f2f92", brightCyan:"#0b5a5a", brightWhite:"#0d0f13" };
+}
+
+function termInit(){
+  if (TERM.obj || typeof Terminal === "undefined") return;
+  const t = new Terminal({
+    fontSize: 13,
+    fontFamily: '"Cascadia Code", "JetBrains Mono", Consolas, monospace',
+    cursorBlink: true,
+    scrollback: 5000,
+    theme: termTheme(),
+    allowProposedApi: true,
+  });
+  TERM.fit = new FitAddon.FitAddon();
+  t.loadAddon(TERM.fit);
+  t.open($("term-pane"));
+  TERM.obj = t;
+  t.onData(d => {
+    // Never send xterm's own protocol answers to the pty (see isProtocolReply).
+    if (isProtocolReply(d)) return;
+    sendInput(d);
+  });
+  t.attachCustomKeyEventHandler(e => {
+    if (e.type !== "keydown") return true;
+    // Tab is the shell's completion key, and in a browser it is also the key that moves
+    // focus to the next control — so xterm would hand it to the toolbar instead of the
+    // shell. Send it ourselves and swallow it.
+    if (e.key === "Tab") {
+      e.preventDefault();
+      sendInput(e.shiftKey ? "\x1b[Z" : "\t");
+      return false;
+    }
+    // Ctrl+Shift+C / Ctrl+Shift+V: copy the selection, paste the clipboard.
+    if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "c" && t.hasSelection()) {
+      navigator.clipboard.writeText(t.getSelection()).catch(() => {});
+      return false;
+    }
+    return true;
+  });
+  t.onResize(e => api("/api/term/resize", { method:"POST", body: JSON.stringify({ cols:e.cols, rows:e.rows }) }).catch(() => {}));
+  TERM.fit.fit();
+  if (TERM.timer) clearInterval(TERM.timer);
+  TERM.timer = setInterval(() => termPoll(), 70);
+  termPoll(true);
+}
+
+function sendInput(text){
+  if (!text) return;
+  api("/api/term/input", { method:"POST", body: JSON.stringify({ text: text }) }).catch(() => {});
+}
+
+function isProtocolReply(d){
+  // xterm.js answers the program's terminal queries (OSC colour reports, DA, DSR) through
+  // onData. Those answers belong to the *terminal*, but ConPTY does not read them as
+  // replies — it parses them as input and hands the leftovers to the program, which then
+  // prints them (the "[?848\ffff… rgb:d0d0/…" garbage inside pi's prompt). So they never
+  // reach the pty. Real keystrokes cannot look like this: arrows are ESC [ A..D, Alt+x is
+  // ESC x, and the replies all start with ESC ] / ESC P / ESC [ ? / ESC [ >.
+  if (!d) return false;
+  if (/^\x1b[\]P]/.test(d)) return true;             // OSC / DCS replies
+  if (/^\x1b\[[?>][0-9;]*c?$/.test(d)) return true;   // DA1 / DA2
+  if (/^\x1b\[\d+;\d+R$/.test(d)) return true;        // cursor position report
+  if (d === "\x1b\\" || d === "\x07") return true;    // stray string terminator / BEL
+  return false;
+}
+
+function b64ToBytes(b64){
+  const bin = atob(b64 || "");
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+function termChip(alive){
+  const el = $("term-state");
+  if (!el) return;
+  el.innerHTML = '<i class="dot ' + (alive ? "ok" : "err") + '"></i><span>' + (alive ? "运行中" : "未启动") + "</span>";
+}
+
+async function termPoll(force){
+  if (!TERM.obj) return;
+  if (!force && S.tab !== "term") return;
+  try {
+    const r = await api("/api/term/output?since=" + TERM.seq);
+    if (r.data) TERM.obj.write(b64ToBytes(r.data));
+    TERM.seq = r.next;
+    termChip(!!r.alive);
+  } catch (e) { /* server restarting */ }
+}
+
+async function termStart(kind){
+  termInit();
+  TERM.kind = kind || "cmd";
+  const cols = TERM.obj ? TERM.obj.cols : 120;
+  const rows = TERM.obj ? TERM.obj.rows : 30;
+  try {
+    await api("/api/term/start", { method:"POST", body: JSON.stringify({ kind: TERM.kind, cols: cols, rows: rows }) });
+    TERM.seq = 0;
+    if (TERM.obj) { TERM.obj.reset(); TERM.obj.clear(); }
+    termPoll(true);
+    if (TERM.obj) TERM.obj.focus();     // keyboard goes back to the shell, not the toolbar
+    toast("已启动 " + TERM.kind);
+  } catch (e){ toast(e.message, true); }
+}
+
+function termRestart(){ termStart(TERM.kind || "cmd"); }
+function termClear(){ if (TERM.obj) TERM.obj.clear(); }
+
+async function termEnter(){
+  termInit();
+  if (!TERM.obj) { toast("xterm.js 没加载上（/static/xterm.js）", true); return; }
+  // Twice: the first fit runs before the flex layout settled, the second corrects it
+  // (a wrong size here means the shell thinks it has 260 columns and lines wrap badly).
+  TERM.fit.fit();
+  setTimeout(() => { try { TERM.fit.fit(); } catch (e) {} }, 250);
+  try {
+    const st = await api("/api/term/state");
+    if (!st.alive) await termStart(TERM.kind || "cmd");
+    else { termChip(true); termPoll(true); }
+  } catch {}
+  TERM.obj.focus();
+}
+
+/* ------------------------------------------------------------------ boot */
+// ?diag=1 puts the viewport geometry in the window title — the only way to read it
+// from outside the app window (no devtools). Used when tuning --window-size.
+if (new URLSearchParams(location.search).get("diag") === "1"){
+  document.title = "Strata Lab · " + window.innerWidth + "x" + window.innerHeight
+    + " dpr" + window.devicePixelRatio + " outer" + window.outerWidth + "x" + window.outerHeight
+    + " screen" + screen.availWidth + "x" + screen.availHeight;
+}
+async function beat(){
+  try {
+    await fetch("/api/beat?w=" + window.innerWidth + "&h=" + window.innerHeight
+      + "&dpr=" + window.devicePixelRatio + "&sw=" + screen.availWidth + "&sh=" + screen.availHeight,
+      { cache:"no-store", keepalive:true });
+  } catch {}
+}
+beat();
+setInterval(beat, 10000);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) beat(); });
+window.addEventListener("focus", beat);
+
+loadStatus().catch(e => toast("状态读取失败: " + e.message, true));
+loadStats();
+loadMetrics();
+(() => {
+  const want = (location.hash || "").replace("#", "");
+  if (want && document.getElementById("tab-" + want)) openTab(want);
+})();
+loadLive();
+document.addEventListener("visibilitychange", () => { if (!document.hidden) loadLive(); });
+setInterval(loadLive, 500);
+setInterval(() => loadStatus().catch(() => {}), 5000);
+setInterval(() => loadStats(), 4000);
+setInterval(() => { if (S.tab === "dash") loadMetrics(); }, 3000);
+setInterval(() => { if (S.tab === "logs") loadLogs(); }, 8000);
+</script>
+</body>
+</html>

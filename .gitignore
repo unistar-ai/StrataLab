@@ -1,0 +1,20 @@
+# Runtime state and local data
+_window_profile/
+logs/
+run/
+history.json
+profiles.json
+*.log
+*.tmp
+
+# Python and build artifacts
+__pycache__/
+*.pyc
+build/
+dist/
+*.egg-info/
+
+# OS files
+Thumbs.db
+.DS_Store
+desktop.ini
