@@ -1540,7 +1540,7 @@ function renderGateway(data){
     ["OpenAI", v1],
     ["Anthropic", base || "（未配置公网 Base URL）"],
     ["本机监听", g.listen],
-    ["API Keys", g.key_count + " 个已注册"]
+    ["API Keys", (data.keys || []).length + " 个已注册"]
   ];
   $("gateway-endpoints").innerHTML = rows.map(r => '<div class="row"><span class="label">'
     + r[0] + '</span><code>' + esc(r[1]) + "</code></div>").join("");
