@@ -676,7 +676,6 @@
               <label class="inline">请求/分钟 <input id="gw-rate" type="number" min="1" max="1000" style="width:72px" /></label>
             </div>
             <div class="btnrow">
-              <label class="inline">新 Key 默认额度 <input id="gw-daily" type="number" min="0" placeholder="空为不限" style="width:120px" /></label>
               <label class="inline">max_tokens <input id="gw-max" type="number" min="1" max="32768" style="width:88px" /></label>
               <label class="inline">等待队列 <input id="gw-queue" type="number" min="0" max="20" style="width:58px" /></label>
             </div>
@@ -1558,7 +1557,7 @@ function renderGateway(data){
   $("gateway-limits").innerHTML =
     "<b>鉴权</b><span>" + (g.key_set ? "Bearer / X-API-Key" : "未配置") + "</span>" +
     "<b>速率</b><span>" + g.rate_per_min + " 请求/分钟</span>" +
-    "<b>新 Key 默认</b><span>" + (g.daily_tokens === null ? "每日不限" : compact(g.daily_tokens) + " tokens/日") + "</span>" +
+    "<b>每日额度</b><span>按 Key 独立设置</span>" +
     "<b>单次输出</b><span>最多 " + compact(g.max_tokens) + " tokens</span>" +
     "<b>请求体</b><span>最多 " + fmtSize(g.max_body_bytes) + "</span>" +
     "<b>排队超时</b><span>" + g.queue_timeout_s + " 秒</span>";
@@ -1597,7 +1596,6 @@ function fillGatewaySettings(g){
   $("gw-public").value = g.public_url || "";
   $("gw-port").value = g.port;
   $("gw-rate").value = g.rate_per_min;
-  $("gw-daily").value = g.daily_tokens === null ? "" : g.daily_tokens;
   $("gw-max").value = g.max_tokens;
   $("gw-queue").value = g.queue_size;
 }
@@ -1608,7 +1606,6 @@ async function saveGateway(){
       public_url:$("gw-public").value.trim(),
       port:parseInt($("gw-port").value, 10),
       rate_per_min:parseInt($("gw-rate").value, 10),
-      daily_tokens:$("gw-daily").value.trim() === "" ? null : parseInt($("gw-daily").value, 10),
       max_tokens:parseInt($("gw-max").value, 10),
       queue_size:parseInt($("gw-queue").value, 10)
     }) });
