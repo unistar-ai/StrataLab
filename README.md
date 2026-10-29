@@ -118,7 +118,7 @@ Gateway 跟随 StrataLab 进程运行：退出 StrataLab 后，公网 API 也不
 
 - `Authorization: Bearer <Key>` 或 `X-API-Key` 鉴权；更换 Key 后旧 Key 立即失效。
 - 只允许 `GET /v1/models`、`POST /v1/chat/completions`、`POST /v1/messages`，不代理管理 API、终端或任意路径。
-- 聊天请求的 `model` 必须等于当前引擎模型，`max_tokens` 必填且不能超过限额。
+- 聊天请求的 `model` 必须等于当前引擎模型，输出不能超过限额。OpenAI 同时接受 `max_tokens` 和 `max_completion_tokens`，两者都省略时应用 Gateway 上限；Anthropic 按协议要求 `max_tokens` 必填。
 - 默认请求体最大 4 MiB、30 请求/分钟、每日 1,000,000 tokens、单次输出最多 8192 tokens。
 - 上游固定单并发；默认最多再等待 2 个请求，排队超过 30 秒或队列已满返回 429。
 - 支持 OpenAI 与 Anthropic 的非流式响应和 SSE；流式响应逐行刷新，不在 Gateway 缓冲完整内容。

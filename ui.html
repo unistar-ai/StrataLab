@@ -650,7 +650,7 @@
           <div id="gw-key-result" style="margin-top:10px"></div>
           <div class="mute" style="margin-top:10px;line-height:1.8">
             完整 Key 只显示一次，服务端仅保存 SHA-256。更换后旧 Key 立即失效。<br />
-            只开放 /v1/models、/v1/chat/completions、/v1/messages；请求必须携带当前模型名和 max_tokens。
+            只开放 /v1/models、/v1/chat/completions、/v1/messages；模型名必须与当前引擎一致。OpenAI 支持 max_tokens / max_completion_tokens。
           </div>
         </div>
         <div class="card">

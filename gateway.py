@@ -477,10 +477,18 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 active_model = gateway._engine_model()
                 if model != active_model:
                     raise Reject(400, f"model 必须是当前引擎模型：{active_model}")
+                if path == "/v1/chat/completions":
+                    if "max_completion_tokens" in data:
+                        alternate = data["max_completion_tokens"]
+                        if "max_tokens" in data and data["max_tokens"] != alternate:
+                            raise Reject(400, "max_tokens 与 max_completion_tokens 不能不一致")
+                        data["max_tokens"] = alternate
+                        data.pop("max_completion_tokens")
+                    data.setdefault("max_tokens", gateway.config["max_tokens"])
                 max_tokens = data.get("max_tokens")
                 if (isinstance(max_tokens, bool) or not isinstance(max_tokens, int)
                         or not 1 <= max_tokens <= gateway.config["max_tokens"]):
-                    raise Reject(400, f"max_tokens 必填，范围为 1–{gateway.config['max_tokens']}")
+                    raise Reject(400, f"max_tokens 范围为 1–{gateway.config['max_tokens']}；Anthropic 请求必填")
                 if "stream" in data and not isinstance(data["stream"], bool):
                     raise Reject(400, "stream 必须是布尔值")
                 stream = bool(data.get("stream"))
