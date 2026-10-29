@@ -33,7 +33,7 @@ DEFAULT_CONFIG = {
 LIMITS = {
     "port": (1024, 65535),
     "rate_per_min": (1, 1000),
-    "daily_tokens": (1000, 1000000000),
+    "daily_tokens": (0, 1000000000),
     "max_body_bytes": (65536, 67108864),
     "max_tokens": (1, 32768),
     "queue_size": (0, 20),
@@ -241,6 +241,8 @@ class GatewayService:
             self.rate.append(now)
 
     def _check_quota(self):
+        if self.config["daily_tokens"] == 0:
+            return
         day = self.state["days"].get(self._day(), {})
         if int(day.get("tokens", 0)) >= self.config["daily_tokens"]:
             raise Reject(429, "已达到今日 token 额度")

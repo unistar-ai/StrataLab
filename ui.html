@@ -637,7 +637,7 @@
               <label class="inline">请求/分钟 <input id="gw-rate" type="number" min="1" max="1000" style="width:72px" /></label>
             </div>
             <div class="btnrow">
-              <label class="inline">每日 tokens <input id="gw-daily" type="number" min="1000" style="width:120px" /></label>
+              <label class="inline">每日 tokens（0 不限） <input id="gw-daily" type="number" min="0" style="width:120px" /></label>
               <label class="inline">max_tokens <input id="gw-max" type="number" min="1" max="32768" style="width:88px" /></label>
               <label class="inline">等待队列 <input id="gw-queue" type="number" min="0" max="20" style="width:58px" /></label>
             </div>
@@ -1519,7 +1519,7 @@ function renderGateway(data){
   $("gateway-limits").innerHTML =
     "<b>鉴权</b><span>" + (g.key_set ? "Bearer / X-API-Key" : "未配置") + "</span>" +
     "<b>速率</b><span>" + g.rate_per_min + " 请求/分钟</span>" +
-    "<b>每日额度</b><span>" + compact(g.daily_tokens) + " tokens</span>" +
+    "<b>每日额度</b><span>" + (g.daily_tokens === 0 ? "不限" : compact(g.daily_tokens) + " tokens") + "</span>" +
     "<b>单次输出</b><span>最多 " + compact(g.max_tokens) + " tokens</span>" +
     "<b>请求体</b><span>最多 " + fmtSize(g.max_body_bytes) + "</span>" +
     "<b>排队超时</b><span>" + g.queue_timeout_s + " 秒</span>";
