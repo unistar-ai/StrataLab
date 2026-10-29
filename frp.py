@@ -12,7 +12,7 @@ class FrpcService:
     def __init__(self, root, app_dir, nowindow=0):
         self.root = Path(root)
         self.app_dir = Path(app_dir)
-        self.directory = self.root / "frp"
+        self.directory = self.app_dir / "frp"
         self.executable = self.directory / ("frpc.exe" if os.name == "nt" else "frpc")
         self.config = self.directory / "frpc.toml"
         self.settings_file = self.app_dir / "frp.json"

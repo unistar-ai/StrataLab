@@ -112,7 +112,7 @@ Chromium 看到的是 1920×1040 DIP、`devicePixelRatio=2`，所以 1400×940 �
 
    云服务器上应通过防火墙限制 `18080`，只让本机 Caddy/Nginx 访问，再经 `443` 对外服务。
 
-本机 FRPC 可以直接由 StrataLab 管理，不需要单独启动脚本。把 `frpc.exe` 与 `frpc.toml` 放在 Strata 根目录的 `frp/` 下，然后在「公网 → FRP 隧道」查看 PID、服务器映射和最近日志，或点击启动/停止。「随 StrataLab 启动」默认关闭，设置保存在 `frp.json`；退出 StrataLab 时，其管理的 FRPC 也会停止。管理 API 不返回隧道 token。
+本机 FRPC 可以直接由 StrataLab 管理，不需要单独启动脚本。把 `frpc.exe` 与 `frpc.toml` 放在 `StrataLab/frp/` 下，然后在「公网 → FRP 隧道」查看 PID、服务器映射和最近日志，或点击启动/停止。「随 StrataLab 启动」默认关闭，设置保存在 `frp.json`；退出 StrataLab 时，其管理的 FRPC 也会停止。管理 API 不返回隧道 token。
 
 公网 Base URL 只用于在页面展示接入地址；Gateway **不负责申请 TLS 证书，也不会自动修改 FRP/云服务器配置**。
 Gateway 跟随 StrataLab 进程运行：退出 StrataLab 后，公网 API 也不可用。Strata 引擎本身可以独立停止或启动。

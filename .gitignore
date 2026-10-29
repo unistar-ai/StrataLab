@@ -5,6 +5,10 @@ run/
 history.json
 profiles.json
 frp.json
+frp/frpc.exe
+frp/frpc
+frp/frpc.toml
+frp/*.log
 gateway.json
 gateway-state.json
 gateway-audit.jsonl
