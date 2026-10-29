@@ -4,6 +4,7 @@ logs/
 run/
 history.json
 profiles.json
+frp.json
 gateway.json
 gateway-state.json
 gateway-audit.jsonl

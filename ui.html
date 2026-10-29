@@ -582,6 +582,15 @@
       </div>
     </div>
     <div class="card">
+      <h2>FRP 隧道 <span class="hint" id="frp-endpoint">读取中…</span></h2>
+      <div class="btnrow">
+        <span class="chip" id="frp-state"><i class="dot"></i><span>读取中…</span></span>
+        <button class="primary" id="frp-toggle" onclick="toggleFrp()">启动隧道</button>
+        <label class="inline"><input type="checkbox" id="frp-auto" onchange="setFrpAuto(this.checked)" /> 随 StrataLab 启动</label>
+      </div>
+      <div class="logbox" id="frp-logs" style="flex:initial;min-height:0;max-height:150px;margin-top:12px">暂无日志</div>
+    </div>
+    <div class="card">
       <h2>审计日志 <span class="hint">最近 100 条 · 仅元数据</span></h2>
       <div class="btnrow" style="margin-bottom:8px">
         <select id="audit-key" onchange="setAuditKey(this.value)"><option value="">全部 API Key</option></select>
@@ -809,7 +818,7 @@ function openTab(name){
   if (name === "models") loadScan();
   if (name === "term") termEnter();
   if (name === "history") loadHistory();
-  if (name === "gateway") loadGateway();
+  if (name === "gateway") { loadGateway(); loadFrp(); }
   if (name === "keys") loadKeys();
   if (name === "bench") loadBench();
   if (name === "logs") loadLogs();
@@ -1587,6 +1596,42 @@ async function loadGateway(){
     renderGateway(await api("/api/gateway" + (selected ? "?key_id=" + encodeURIComponent(selected) : "")));
   } catch { $("gateway-state").innerHTML = '<i class="dot err"></i><span>读取失败</span>'; }
 }
+function renderFrp(data){
+  const f = data.frp;
+  S.frp = f;
+  const label = f.running ? "运行中 · PID " + f.pid : (f.configured ? "已停止" : "未配置");
+  $("frp-state").innerHTML = '<i class="dot ' + (f.running ? "ok" : "err") + '"></i><span>' + label + "</span>";
+  $("frp-endpoint").textContent = f.server
+    ? f.server + " · " + f.local_port + " → " + f.remote_port
+    : "请检查 frp/frpc.toml";
+  $("frp-toggle").textContent = f.running ? "停止隧道" : "启动隧道";
+  $("frp-toggle").disabled = !f.installed || !f.configured;
+  $("frp-auto").checked = !!f.auto_start;
+  $("frp-logs").textContent = (data.logs || []).join("\n") || "暂无日志";
+  const box = $("frp-logs");
+  box.scrollTop = box.scrollHeight;
+}
+async function loadFrp(){
+  try { renderFrp(await api("/api/frp")); }
+  catch { $("frp-state").innerHTML = '<i class="dot err"></i><span>读取失败</span>'; }
+}
+async function toggleFrp(){
+  if (!S.frp) return;
+  try {
+    const running = S.frp.running;
+    const r = await api("/api/frp/" + (running ? "stop" : "start"), { method:"POST", body:"{}" });
+    S.frp = r.frp;
+    toast(r.frp.running ? "FRP 隧道已启动" : "FRP 隧道已停止");
+    setTimeout(loadFrp, 500);
+  } catch (e){ toast(e.message, true); loadFrp(); }
+}
+async function setFrpAuto(enabled){
+  try {
+    const r = await api("/api/frp/config", { method:"POST", body:JSON.stringify({ auto_start:enabled }) });
+    S.frp = r.frp;
+    toast(enabled ? "已开启随 StrataLab 启动" : "已关闭随 StrataLab 启动");
+  } catch (e){ toast(e.message, true); loadFrp(); }
+}
 function setAuditKey(id){
   S.auditKey = id;
   loadGateway();
@@ -1933,7 +1978,7 @@ setInterval(loadLive, 500);
 setInterval(() => loadStatus().catch(() => {}), 5000);
 setInterval(() => loadStats(), 4000);
 setInterval(() => { if (S.tab === "dash") loadMetrics(); }, 3000);
-setInterval(() => { if (S.tab === "gateway") loadGateway(); }, 4000);
+setInterval(() => { if (S.tab === "gateway") { loadGateway(); loadFrp(); } }, 4000);
 setInterval(() => { if (S.tab === "logs") loadLogs(); }, 8000);
 </script>
 </body>

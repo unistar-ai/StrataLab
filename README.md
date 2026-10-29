@@ -112,6 +112,8 @@ Chromium 看到的是 1920×1040 DIP、`devicePixelRatio=2`，所以 1400×940 �
 
    云服务器上应通过防火墙限制 `18080`，只让本机 Caddy/Nginx 访问，再经 `443` 对外服务。
 
+本机 FRPC 可以直接由 StrataLab 管理，不需要单独启动脚本。把 `frpc.exe` 与 `frpc.toml` 放在 Strata 根目录的 `frp/` 下，然后在「公网 → FRP 隧道」查看 PID、服务器映射和最近日志，或点击启动/停止。「随 StrataLab 启动」默认关闭，设置保存在 `frp.json`；退出 StrataLab 时，其管理的 FRPC 也会停止。管理 API 不返回隧道 token。
+
 公网 Base URL 只用于在页面展示接入地址；Gateway **不负责申请 TLS 证书，也不会自动修改 FRP/云服务器配置**。
 Gateway 跟随 StrataLab 进程运行：退出 StrataLab 后，公网 API 也不可用。Strata 引擎本身可以独立停止或启动。
 
@@ -202,6 +204,7 @@ strata serve: prompt 24 tokens = 17 reused + 7 read in 269 ms (26.0 tok/s),
 |---|---|
 | `profiles.json` | 档位参数（可被设置页改写；缺失时用内置默认） |
 | `history.json` | 运行记录，最多 300 条 |
+| `frp.json` | 是否让 FRPC 随 StrataLab 自动启动，默认关闭 |
 | `gateway.json` | 可选 Gateway 配置、多个命名 Key 的哈希、独立额度与启停状态；不含完整 API Key |
 | `gateway-state.json` | 全局及每个 Key 的每日和累计请求/token 计数，重启后保留 |
 | `gateway-audit.jsonl` | 不含消息内容的审计元数据，超过 8 MiB 轮转 |
@@ -223,6 +226,10 @@ strata serve: prompt 24 tokens = 17 reused + 7 read in 269 ms (26.0 tok/s),
 | POST | `/api/gateway/key/update` | 修改名称和独立额度 |
 | POST | `/api/gateway/key/delete` | 永久删除 Key，保留历史审计 |
 | POST | `/api/gateway/clear` | 清空 Gateway 审计和用量 |
+| GET | `/api/frp` | FRPC 进程状态、服务器映射与最近日志 |
+| POST | `/api/frp/start` | 启动由 StrataLab 管理的 FRPC |
+| POST | `/api/frp/stop` | 停止由 StrataLab 管理的 FRPC |
+| POST | `/api/frp/config` | 设置 FRPC 是否随 StrataLab 启动 |
 | GET | `/api/meta` | `/props` 摘要：构建版本、模型路径、槽位、采样默认值（不返回 10 KB 的 chat template） |
 | GET | `/api/live` | 当前请求状态、进度、速度、耗时及最近 60 个 Prefill/Decode 速度采样点 |
 | GET | `/api/metrics` | 采样序列（每 2 秒，最多 300 点）+ 实时解析的引擎统计 |

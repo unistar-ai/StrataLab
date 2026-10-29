@@ -12,6 +12,10 @@ Zero dependency (stdlib only), binds 127.0.0.1. Backend for ui.html.
   POST /api/gateway/key/update  rename, change quota, enable or disable a key
   POST /api/gateway/key/delete  permanently delete a key, retaining its audit history
   POST /api/gateway/clear    clear gateway audit and token counters
+  GET  /api/frp              FRPC process state and recent logs
+  POST /api/frp/start        start the managed FRPC process
+  POST /api/frp/stop         stop the managed FRPC process
+  POST /api/frp/config       configure FRPC auto-start with the lab
   GET  /api/meta             /props summary: build, model path, sampling defaults
   GET  /api/live             current request phase, progress and speed
   GET  /api/metrics          sampled time series + parsed engine statistics
@@ -53,6 +57,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from gateway import GatewayService
+from frp import FrpcService
 
 APP_DIR = Path(__file__).resolve().parent
 ROOT = Path(os.environ.get("STRATA_LAB_ROOT", str(APP_DIR.parent))).resolve()
@@ -130,6 +135,7 @@ GATEWAY = GatewayService(APP_DIR)
 # Without CREATE_NO_WINDOW each one allocates a console and the user sees a window
 # flash — the sampler alone would do it every two seconds.
 NOWINDOW = 0x08000000 if os.name == "nt" else 0
+FRPC = FrpcService(ROOT, APP_DIR, NOWINDOW)
 VRAM_CACHE = {}
 HTTPD = None
 LAST_BEAT = {"t": 0.0}
@@ -1017,6 +1023,7 @@ def watchdog():
         except Exception:
             pass
         TERM.stop()
+        FRPC.stop()
         stop_engine()
         os._exit(0)
 
@@ -1118,6 +1125,7 @@ def window_watcher():
             log_ui("app window closed and no heartbeat for %ds — stopping the engine"
                    % int(silent))
             TERM.stop()
+            FRPC.stop()
             stop_engine()
             os._exit(0)
 
@@ -1519,6 +1527,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/gateway":
             return self.reply(GATEWAY.monitor(params.get("key_id") or None))
 
+        if path == "/api/frp":
+            return self.reply({"frp": FRPC.public(), "logs": FRPC.logs()})
+
         if path == "/api/meta":
             return self.reply(engine_meta())
 
@@ -1599,6 +1610,24 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.partition("?")[0]
         data = self.body()
 
+        if path == "/api/frp/start":
+            try:
+                return self.reply({"ok": True, "frp": FRPC.start()})
+            except (ValueError, OSError) as exc:
+                return self.reply({"ok": False, "error": str(exc)}, 400)
+
+        if path == "/api/frp/stop":
+            try:
+                return self.reply({"ok": True, "frp": FRPC.stop()})
+            except OSError as exc:
+                return self.reply({"ok": False, "error": str(exc)}, 500)
+
+        if path == "/api/frp/config":
+            try:
+                return self.reply({"ok": True, "frp": FRPC.set_auto_start(data.get("auto_start"))})
+            except (ValueError, OSError) as exc:
+                return self.reply({"ok": False, "error": str(exc)}, 400)
+
         if path == "/api/gateway":
             try:
                 return self.reply({"ok": True, "gateway": GATEWAY.configure(data)})
@@ -1662,6 +1691,7 @@ class Handler(BaseHTTPRequestHandler):
 
             def bye():
                 TERM.stop()
+                FRPC.stop()
                 if also_engine:
                     stop_engine()
                 try:
@@ -1852,6 +1882,12 @@ def main():
             open_window(url)
         return
     HTTPD = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
+    if FRPC.auto_start:
+        try:
+            FRPC.start()
+            log_ui("frpc started automatically")
+        except (ValueError, OSError) as exc:
+            log_ui("frpc failed to start: %s" % exc)
     if GATEWAY.config["enabled"]:
         try:
             GATEWAY.start()
@@ -1883,6 +1919,7 @@ def main():
     if open_it:
         threading.Timer(0.8, raise_window).start()
     HTTPD.serve_forever()
+    FRPC.stop()
 
 
 if __name__ == "__main__":
