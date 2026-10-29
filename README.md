@@ -124,7 +124,7 @@ Gateway 跟随 StrataLab 进程运行：退出 StrataLab 后，公网 API 也不
 - 默认请求体最大 4 MiB、30 请求/分钟、单次输出最多 8192 tokens。
 - 上游固定单并发；默认最多再等待 2 个请求，排队超过 30 秒或队列已满返回 429。
 - 支持 OpenAI 与 Anthropic 的非流式响应和 SSE；流式响应逐行刷新，不在 Gateway 缓冲完整内容。
-- 全局和每个 Key 的用量都持久化到 `gateway-state.json`，重启后不清零；旧单 Key 配置自动迁移为“默认 Key”。
+- 全局和每个 Key 的用量都持久化到 `gateway-state.json`，重启后不清零；旧单 Key 配置自动迁移为“主 Key”。
 
 远程客户端的 `max_tokens` 也必须遵守限额；例如 DSH/Pi 若配置为 32768，需要在客户端调低，或在设置页提高 Gateway 上限（最高 32768）。
 

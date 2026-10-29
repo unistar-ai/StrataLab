@@ -88,7 +88,7 @@ def validate_config(data):
     if not isinstance(cfg["keys"], list):
         raise ValueError("keys 必须是数组")
     if not cfg["keys"] and cfg["key_hash"]:
-        cfg["keys"] = [{"id": cfg["key_id"], "name": "默认 Key", "hash": cfg["key_hash"],
+        cfg["keys"] = [{"id": cfg["key_id"], "name": "主 Key", "hash": cfg["key_hash"],
                         "daily_tokens": cfg["daily_tokens"], "enabled": True,
                         "created_at": None}]
     keys = []
