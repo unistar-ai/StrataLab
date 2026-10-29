@@ -600,7 +600,7 @@
       </div>
       <div class="tools"><button class="mini" onclick="loadKeys()">刷新</button></div>
     </div>
-    <div class="banner info show"><span>每个 Key 独立计算每日 token 额度，0 为不限。吊销后立即失效，但历史审计保留。完整 Key 只在注册时显示一次。</span></div>
+    <div class="banner info show"><span>每个 Key 独立计算每日 token 额度，0 为不限。删除后立即失效，但历史审计保留。完整 Key 只在注册时显示一次。</span></div>
     <div class="card">
       <h2>注册新 Key</h2>
       <div class="btnrow">
@@ -675,7 +675,7 @@
             <button class="mini" onclick="openTab('keys')">管理 API Key</button>
           </div>
           <div class="mute" style="margin-top:10px;line-height:1.8">
-            完整 Key 只显示一次，服务端仅保存 SHA-256；命名、独立额度和吊销在“密钥”页管理。<br />
+            完整 Key 只显示一次，服务端仅保存 SHA-256；命名、独立额度和删除在“密钥”页管理。<br />
             只开放 /v1/models、/v1/chat/completions、/v1/messages；模型名必须与当前引擎一致。OpenAI 支持 max_tokens / max_completion_tokens。
           </div>
         </div>
@@ -1556,7 +1556,7 @@ function renderGateway(data){
     + 'localIP = "127.0.0.1"\nlocalPort = ' + g.port + '\nremotePort = ' + g.port;
   $("audit-key").innerHTML = '<option value="">全部 API Key</option>' + (data.keys || []).map(k =>
     '<option value="' + k.id + '" ' + (data.selected_key === k.id ? "selected" : "") + '>'
-    + esc(k.name) + (k.enabled ? "" : "（已吊销）") + "</option>").join("");
+    + esc(k.name) + (k.enabled ? "" : "（已停用）") + "</option>").join("");
   const names = Object.fromEntries((data.keys || []).map(k => [k.id, k.name]));
   const items = data.recent || [];
   $("gateway-audit-table").innerHTML = '<tr><th>时间</th><th>API Key</th><th>路由</th><th>状态</th><th>耗时</th><th>tokens</th></tr>'
@@ -1618,10 +1618,9 @@ function renderKeyTable(keys){
       + esc(k.name) + '" style="width:170px" /></td><td class="mono">' + k.id + '</td><td>' + compact(k.today_tokens)
       + '<div class="mute">' + k.today_requests + ' 次请求</div></td><td><input class="key-edit-daily" data-id="'
       + k.id + '" type="number" min="0" value="' + k.daily_tokens + '" style="width:125px" /></td><td class="'
-      + (k.enabled ? "okc" : "errc") + '">' + (k.enabled ? "有效" : "已吊销") + '</td><td><div class="btnrow">'
+      + (k.enabled ? "okc" : "errc") + '">' + (k.enabled ? "有效" : "已停用") + '</td><td><div class="btnrow">'
       + '<button class="mini" onclick="saveKey(\'' + k.id + '\')">保存</button>'
-      + '<button class="mini ' + (k.enabled ? "danger" : "") + '" onclick="toggleKey(\'' + k.id + '\','
-      + (k.enabled ? "false" : "true") + ')">' + (k.enabled ? "吊销" : "启用") + '</button>'
+      + '<button class="mini danger" onclick="deleteKey(\'' + k.id + '\')">删除</button>'
       + '</div></td></tr>').join("") : '<tr><td colspan="6" class="note">还没有 API Key</td></tr>');
 }
 async function createKey(){
@@ -1649,11 +1648,13 @@ async function saveKey(id){
     toast("Key 已更新"); loadKeys();
   } catch (e){ toast(e.message, true); }
 }
-async function toggleKey(id, enabled){
-  if (!enabled && !confirm("吊销这个 API Key？使用它的客户端会立即返回 401，历史审计保留。")) return;
+async function deleteKey(id){
+  const input = document.querySelector('.key-edit-name[data-id="' + id + '"]');
+  const name = input ? input.value.trim() : id;
+  if (!confirm('永久删除 API Key「' + name + '」？\n\n客户端会立即返回 401；此操作不可撤销，历史审计保留。')) return;
   try {
-    await api("/api/gateway/key/update", { method:"POST", body:JSON.stringify({ id:id, enabled:enabled }) });
-    toast(enabled ? "Key 已启用" : "Key 已吊销"); loadKeys();
+    await api("/api/gateway/key/delete", { method:"POST", body:JSON.stringify({ id:id }) });
+    toast("Key 已删除"); loadKeys();
   } catch (e){ toast(e.message, true); }
 }
 async function clearGatewayAudit(){

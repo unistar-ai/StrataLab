@@ -74,7 +74,7 @@ Chromium 看到的是 1920×1040 DIP、`devicePixelRatio=2`，所以 1400×940 �
 | **基准** | 单请求测速（提示词 / tokens / 思考强度）+ 最近记录表（tok/s、tokens、首字、缓存） |
 | **历史** | 启动/测速/对话/下载记录表 + decode 速度走势 + CSV 导出 + 清空 |
 | **公网** | 可选 AI Gateway 的运行状态、今日/累计请求与 token、拒绝数、活动/排队请求、按 Key 筛选的审计元数据 |
-| **密钥** | 注册多个命名 API Key、独立每日额度、查看每 Key 今日用量、编辑、吊销与重新启用 |
+| **密钥** | 注册多个命名 API Key、独立每日额度、查看每 Key 今日用量、编辑与永久删除 |
 | **日志** | 引擎日志文件切换、正则过滤、跟随滚动 |
 | **设置** | 接入信息、公网 Gateway 开关与默认限额、档位参数（ctx / kv / vision / parallel）、关闭方式 |
 
@@ -117,7 +117,7 @@ Gateway 跟随 StrataLab 进程运行：退出 StrataLab 后，公网 API 也不
 
 ### 内置保护
 
-- `Authorization: Bearer <Key>` 或 `X-API-Key` 鉴权；支持多个命名 Key，吊销后立即失效，也可重新启用。
+- `Authorization: Bearer <Key>` 或 `X-API-Key` 鉴权；支持多个命名 Key，永久删除后立即失效，历史审计保留。
 - 每个 Key 有独立每日 token 额度，`0` 表示不限制；设置页的全局每日额度只作为新 Key 的默认值。
 - 只允许 `GET /v1/models`、`POST /v1/chat/completions`、`POST /v1/messages`，不代理管理 API、终端或任意路径。
 - 聊天请求的 `model` 必须等于当前引擎模型，输出不能超过限额。OpenAI 同时接受 `max_tokens` 和 `max_completion_tokens`，两者都省略时应用 Gateway 上限；Anthropic 按协议要求 `max_tokens` 必填。
@@ -219,8 +219,8 @@ strata serve: prompt 24 tokens = 17 reused + 7 read in 269 ms (26.0 tok/s),
 | GET | `/api/stats` | 服务计数（`run` 本次运行 / `all` 该日志全部）+ 专家缓存命中 + 上一条请求 |
 | GET/POST | `/api/gateway` | 读取监控 / 更新可选 Gateway 配置；GET 支持 `?key_id=` 筛选 |
 | POST | `/api/gateway/key` | 注册命名 API Key 和独立额度；完整 Key 仅本次返回 |
-| POST | `/api/gateway/key/update` | 修改名称、独立额度，或启用/吊销 Key |
-| POST | `/api/gateway/key/revoke` | 吊销 Key，保留历史审计 |
+| POST | `/api/gateway/key/update` | 修改名称和独立额度 |
+| POST | `/api/gateway/key/delete` | 永久删除 Key，保留历史审计 |
 | POST | `/api/gateway/clear` | 清空 Gateway 审计和用量 |
 | GET | `/api/meta` | `/props` 摘要：构建版本、模型路径、槽位、采样默认值（不返回 10 KB 的 chat template） |
 | GET | `/api/live` | 当前请求状态、进度、速度、耗时及最近 60 个 Prefill/Decode 速度采样点 |

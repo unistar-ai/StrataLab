@@ -10,7 +10,7 @@ Zero dependency (stdlib only), binds 127.0.0.1. Backend for ui.html.
   POST /api/gateway          update optional gateway configuration
   POST /api/gateway/key      register a named API key (returned once, stored hashed)
   POST /api/gateway/key/update  rename, change quota, enable or disable a key
-  POST /api/gateway/key/revoke  revoke a key without deleting its audit history
+  POST /api/gateway/key/delete  permanently delete a key, retaining its audit history
   POST /api/gateway/clear    clear gateway audit and token counters
   GET  /api/meta             /props summary: build, model path, sampling defaults
   GET  /api/live             current request phase, progress and speed
@@ -1619,9 +1619,9 @@ class Handler(BaseHTTPRequestHandler):
             except (ValueError, OSError) as exc:
                 return self.reply({"ok": False, "error": str(exc)}, 400)
 
-        if path == "/api/gateway/key/revoke":
+        if path == "/api/gateway/key/delete":
             try:
-                keys = GATEWAY.revoke_key(data.get("id") or "")
+                keys = GATEWAY.delete_key(data.get("id") or "")
                 return self.reply({"ok": True, "keys": keys})
             except (ValueError, OSError) as exc:
                 return self.reply({"ok": False, "error": str(exc)}, 400)

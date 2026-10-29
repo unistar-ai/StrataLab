@@ -318,8 +318,14 @@ class GatewayService:
             self._save_json(self.config_file, self.config)
             return self.keys_public()
 
-    def revoke_key(self, key_id):
-        return self.update_key(key_id, {"enabled": False})
+    def delete_key(self, key_id):
+        with self.lock:
+            remaining = [item for item in self.config["keys"] if item["id"] != key_id]
+            if len(remaining) == len(self.config["keys"]):
+                raise ValueError("Key 不存在")
+            self.config["keys"] = remaining
+            self._save_json(self.config_file, self.config)
+            return self.keys_public()
 
     def _authenticated(self, handler):
         supplied = handler.headers.get("X-API-Key", "")
