@@ -300,6 +300,7 @@
     <button data-tab="chat">对话</button>
     <button data-tab="bench">基准</button>
     <button data-tab="history">历史</button>
+    <button data-tab="gateway">公网</button>
     <button data-tab="logs">日志</button>
     <button data-tab="settings">设置</button>
   </nav>
@@ -551,6 +552,43 @@
     </div>
   </section>
 
+  <!-- ================================================================ 公网 Gateway -->
+  <section class="tab" id="tab-gateway">
+    <div class="sec">
+      <div>
+        <div class="eyebrow">公网</div>
+        <h1>AI Gateway 监控</h1>
+      </div>
+      <div class="tools">
+        <span class="chip" id="gateway-state"><i class="dot"></i><span>未启用</span></span>
+        <button class="mini" onclick="openTab('settings')">配置</button>
+        <button class="mini" onclick="loadGateway()">刷新</button>
+      </div>
+    </div>
+    <div class="banner info show">
+      <span>FRP 只转发 Gateway，不要直接转发引擎 8080。本机 Gateway 只监听 127.0.0.1；公网 HTTPS 由云服务器提供。审计不保存 API Key、提示词或生成内容。</span>
+    </div>
+    <div class="kpi3" id="gateway-kpis"></div>
+    <div class="cols">
+      <div class="card">
+        <h2>公网接入 <span class="hint">在设置页生成 API Key</span></h2>
+        <div class="rows" id="gateway-endpoints"></div>
+      </div>
+      <div class="card">
+        <h2>保护与 FRP <span class="hint">单上游并发</span></h2>
+        <div class="kv" id="gateway-limits"></div>
+        <pre class="muted mono" id="gateway-frpc" style="white-space:pre-wrap;user-select:text"></pre>
+      </div>
+    </div>
+    <div class="card">
+      <h2>审计日志 <span class="hint">最近 100 条 · 仅元数据</span></h2>
+      <div class="btnrow" style="margin-bottom:8px">
+        <button class="mini danger" onclick="clearGatewayAudit()">清空审计与用量</button>
+      </div>
+      <div style="overflow:auto"><table id="gateway-audit-table"></table></div>
+    </div>
+  </section>
+
   <!-- ================================================================ 日志 -->
   <section class="tab" id="tab-logs">
     <div class="sec">
@@ -589,6 +627,32 @@
         </div>
       </div>
       <div class="col">
+        <div class="card">
+          <h2>公网 API Gateway <span class="hint">默认关闭</span></h2>
+          <label class="inline"><input type="checkbox" id="gw-enabled" /> 启用本机 Gateway</label>
+          <div style="display:grid;gap:9px;margin-top:12px">
+            <label class="inline">公网 Base URL <input id="gw-public" type="url" placeholder="https://api.example.com" style="flex:1;min-width:0" /></label>
+            <div class="btnrow">
+              <label class="inline">本机端口 <input id="gw-port" type="number" min="1024" max="65535" style="width:88px" /></label>
+              <label class="inline">请求/分钟 <input id="gw-rate" type="number" min="1" max="1000" style="width:72px" /></label>
+            </div>
+            <div class="btnrow">
+              <label class="inline">每日 tokens <input id="gw-daily" type="number" min="1000" style="width:120px" /></label>
+              <label class="inline">max_tokens <input id="gw-max" type="number" min="1" max="32768" style="width:88px" /></label>
+              <label class="inline">等待队列 <input id="gw-queue" type="number" min="0" max="20" style="width:58px" /></label>
+            </div>
+          </div>
+          <div class="btnrow" style="margin-top:12px">
+            <button class="primary" onclick="saveGateway()">保存并应用</button>
+            <button class="mini" onclick="generateGatewayKey()">生成 / 更换 API Key</button>
+            <span class="mute" id="gw-key-state"></span>
+          </div>
+          <div id="gw-key-result" style="margin-top:10px"></div>
+          <div class="mute" style="margin-top:10px;line-height:1.8">
+            完整 Key 只显示一次，服务端仅保存 SHA-256。更换后旧 Key 立即失效。<br />
+            只开放 /v1/models、/v1/chat/completions、/v1/messages；请求必须携带当前模型名和 max_tokens。
+          </div>
+        </div>
         <div class="card">
           <h2>说明</h2>
           <div class="muted" style="line-height:2">
@@ -709,6 +773,7 @@ function openTab(name){
   if (name === "models") loadScan();
   if (name === "term") termEnter();
   if (name === "history") loadHistory();
+  if (name === "gateway") loadGateway();
   if (name === "bench") loadBench();
   if (name === "logs") loadLogs();
   if (name === "settings") loadSettings();
@@ -1427,11 +1492,109 @@ async function loadLogs(force){
   } catch {}
 }
 
+/* ------------------------------------------------------------------ gateway */
+function renderGateway(data){
+  S.gateway = data;
+  const g = data.gateway, today = data.today || {};
+  const state = $("gateway-state");
+  state.innerHTML = '<i class="dot ' + (g.running ? "ok" : "err") + '"></i><span>'
+    + (g.running ? "运行中" : (g.enabled ? "启动失败" : "未启用")) + "</span>";
+  const kpi = (label, value, sub) => '<div class="kpi"><div class="k">' + label
+    + '</div><div class="v">' + value + '</div><div class="s">' + sub + "</div></div>";
+  $("gateway-kpis").innerHTML =
+    kpi("今日请求", compact(today.requests), "累计 " + compact(data.total_requests)) +
+    kpi("今日 tokens", compact(today.tokens), "累计 " + compact(data.total_tokens)) +
+    kpi("今日拒绝", compact(today.rejected), "鉴权 / 限额 / 上游错误") +
+    kpi("当前请求", nf(g.active), "排队 " + nf(g.waiting) + " · 上限 " + g.queue_size);
+  const base = g.public_url || "";
+  const v1 = base ? (base.endsWith("/v1") ? base : base + "/v1") : "（未配置公网 Base URL）";
+  const rows = [
+    ["OpenAI", v1],
+    ["Anthropic", base || "（未配置公网 Base URL）"],
+    ["本机监听", g.listen],
+    ["Key ID", g.key_set ? g.key_id : "（未生成）"]
+  ];
+  $("gateway-endpoints").innerHTML = rows.map(r => '<div class="row"><span class="label">'
+    + r[0] + '</span><code>' + esc(r[1]) + "</code></div>").join("");
+  $("gateway-limits").innerHTML =
+    "<b>鉴权</b><span>" + (g.key_set ? "Bearer / X-API-Key" : "未配置") + "</span>" +
+    "<b>速率</b><span>" + g.rate_per_min + " 请求/分钟</span>" +
+    "<b>每日额度</b><span>" + compact(g.daily_tokens) + " tokens</span>" +
+    "<b>单次输出</b><span>最多 " + compact(g.max_tokens) + " tokens</span>" +
+    "<b>请求体</b><span>最多 " + fmtSize(g.max_body_bytes) + "</span>" +
+    "<b>排队超时</b><span>" + g.queue_timeout_s + " 秒</span>";
+  $("gateway-frpc").textContent = '# frpc.toml；云侧仍应限制端口并配置 HTTPS\n'
+    + '[[proxies]]\nname = "strata-gateway"\ntype = "tcp"\n'
+    + 'localIP = "127.0.0.1"\nlocalPort = ' + g.port + '\nremotePort = ' + g.port;
+  const items = data.recent || [];
+  $("gateway-audit-table").innerHTML = '<tr><th>时间</th><th>Key ID</th><th>路由</th><th>状态</th><th>耗时</th><th>tokens</th></tr>'
+    + (items.length ? items.map(it => {
+      const ok = it.status >= 200 && it.status < 400;
+      return '<tr><td class="mono">' + new Date(it.ts * 1000).toLocaleString("zh-CN", { hour12:false })
+        + '</td><td class="mono">' + esc(it.key_id) + '</td><td class="mono" title="' + esc(it.model || "")
+        + '">' + esc(it.route) + (it.stream ? " · SSE" : "") + '</td><td class="' + (ok ? "okc" : "errc")
+        + '" title="' + esc(it.error || "") + '">' + it.status + '</td><td>' + nf(it.ms)
+        + ' ms</td><td>' + compact(it.total_tokens) + '</td></tr>';
+    }).join("") : '<tr><td colspan="6" class="note">还没有请求</td></tr>');
+}
+async function loadGateway(){
+  try { renderGateway(await api("/api/gateway")); }
+  catch { $("gateway-state").innerHTML = '<i class="dot err"></i><span>读取失败</span>'; }
+}
+function fillGatewaySettings(g){
+  $("gw-enabled").checked = !!g.enabled;
+  $("gw-public").value = g.public_url || "";
+  $("gw-port").value = g.port;
+  $("gw-rate").value = g.rate_per_min;
+  $("gw-daily").value = g.daily_tokens;
+  $("gw-max").value = g.max_tokens;
+  $("gw-queue").value = g.queue_size;
+  $("gw-key-state").textContent = g.key_set ? "Key ID " + g.key_id : "尚未生成 Key";
+}
+async function saveGateway(){
+  try {
+    const r = await api("/api/gateway", { method:"POST", body:JSON.stringify({
+      enabled:$("gw-enabled").checked,
+      public_url:$("gw-public").value.trim(),
+      port:parseInt($("gw-port").value, 10),
+      rate_per_min:parseInt($("gw-rate").value, 10),
+      daily_tokens:parseInt($("gw-daily").value, 10),
+      max_tokens:parseInt($("gw-max").value, 10),
+      queue_size:parseInt($("gw-queue").value, 10)
+    }) });
+    fillGatewaySettings(r.gateway);
+    toast(r.gateway.running ? "Gateway 已启动" : "配置已保存，Gateway 已关闭");
+  } catch (e){ toast(e.message, true); }
+}
+async function generateGatewayKey(){
+  const current = S.gateway && S.gateway.gateway;
+  if (current && current.key_set && !confirm("更换 API Key？旧 Key 会立即失效。")) return;
+  try {
+    const r = await api("/api/gateway/key", { method:"POST", body:"{}" });
+    if (S.gateway) S.gateway.gateway = r.gateway;
+    $("gw-key-state").textContent = "Key ID " + r.gateway.key_id;
+    $("gw-key-result").innerHTML = '<div class="row"><span class="label">完整 Key</span><code>'
+      + esc(r.key) + '</code><button class="copy" data-copy="' + esc(r.key)
+      + '" onclick="copyText(this.dataset.copy, this)">复制</button></div>'
+      + '<div class="mute warnc">现在复制并妥善保存；刷新后无法再次查看。</div>';
+  } catch (e){ toast(e.message, true); }
+}
+async function clearGatewayAudit(){
+  if (!confirm("清空 Gateway 审计日志和全部 token 计数？此操作不可撤销。")) return;
+  try {
+    await api("/api/gateway/clear", { method:"POST", body:"{}" });
+    toast("已清空"); loadGateway();
+  } catch (e){ toast(e.message, true); }
+}
+
 /* ------------------------------------------------------------------ settings */
 async function loadSettings(){
   try {
-    const res = await Promise.all([api("/api/conn"), api("/api/profiles")]);
+    const res = await Promise.all([api("/api/conn"), api("/api/profiles"), api("/api/gateway")]);
     const c = res[0], p = res[1];
+    fillGatewaySettings(res[2].gateway);
+    if (S.gateway) S.gateway.gateway = res[2].gateway;
+    else S.gateway = res[2];
     $("conn").innerHTML =
       '<b>Base URL</b><span class="mono">' + esc(c.v1) + "</span>" +
       '<b>Anthropic</b><span class="mono">' + esc(c.anthropic) + "</span>" +
@@ -1640,6 +1803,7 @@ setInterval(loadLive, 500);
 setInterval(() => loadStatus().catch(() => {}), 5000);
 setInterval(() => loadStats(), 4000);
 setInterval(() => { if (S.tab === "dash") loadMetrics(); }, 3000);
+setInterval(() => { if (S.tab === "gateway") loadGateway(); }, 4000);
 setInterval(() => { if (S.tab === "logs") loadLogs(); }, 8000);
 </script>
 </body>

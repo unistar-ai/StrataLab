@@ -6,6 +6,10 @@ Zero dependency (stdlib only), binds 127.0.0.1. Backend for ui.html.
   GET  /api/status           health, VRAM, RAM, profiles, jobs, stale markers
   GET  /api/stats            serving counters parsed from the engine log
                              (this engine run / every run in that log)
+  GET  /api/gateway          public API gateway config, counters and audit metadata
+  POST /api/gateway          update optional gateway configuration
+  POST /api/gateway/key      rotate the API key (returned once, stored hashed)
+  POST /api/gateway/clear    clear gateway audit and token counters
   GET  /api/meta             /props summary: build, model path, sampling defaults
   GET  /api/live             current request phase, progress and speed
   GET  /api/metrics          sampled time series + parsed engine statistics
@@ -45,6 +49,8 @@ import uuid
 from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+
+from gateway import GatewayService
 
 APP_DIR = Path(__file__).resolve().parent
 ROOT = Path(os.environ.get("STRATA_LAB_ROOT", str(APP_DIR.parent))).resolve()
@@ -116,6 +122,7 @@ JOBS = {}
 JOB_ORDER = []
 METRICS = deque(maxlen=300)
 LAST_ENGINE = {}
+GATEWAY = GatewayService(APP_DIR)
 
 # Every subprocess call below runs a console tool (nvidia-smi / tasklist / strata.cmd).
 # Without CREATE_NO_WINDOW each one allocates a console and the user sees a window
@@ -1507,6 +1514,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/stats":
             return self.reply(stats_payload())
 
+        if path == "/api/gateway":
+            return self.reply(GATEWAY.monitor())
+
         if path == "/api/meta":
             return self.reply(engine_meta())
 
@@ -1586,6 +1596,26 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply({"error": "cross-origin POST refused"}, 403)
         path = self.path.partition("?")[0]
         data = self.body()
+
+        if path == "/api/gateway":
+            try:
+                return self.reply({"ok": True, "gateway": GATEWAY.configure(data)})
+            except (ValueError, OSError) as exc:
+                return self.reply({"ok": False, "error": str(exc)}, 400)
+
+        if path == "/api/gateway/key":
+            try:
+                key, public = GATEWAY.generate_key()
+                return self.reply({"ok": True, "key": key, "gateway": public})
+            except OSError as exc:
+                return self.reply({"ok": False, "error": str(exc)}, 500)
+
+        if path == "/api/gateway/clear":
+            try:
+                GATEWAY.clear_audit()
+                return self.reply({"ok": True})
+            except OSError as exc:
+                return self.reply({"ok": False, "error": str(exc)}, 500)
 
         if path == "/api/start":
             pid = data.get("id")
@@ -1804,6 +1834,12 @@ def main():
             open_window(url)
         return
     HTTPD = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
+    if GATEWAY.config["enabled"]:
+        try:
+            GATEWAY.start()
+            log_ui("gateway listening on 127.0.0.1:%d" % GATEWAY.config["port"])
+        except (OSError, ValueError) as exc:
+            log_ui("gateway failed to start: %s" % exc)
     threading.Thread(target=vram_loop, daemon=True).start()
     threading.Thread(target=sampler, daemon=True).start()
     if open_it or os.environ.get("STRATA_LAB_WATCHDOG") == "1":

@@ -4,6 +4,10 @@ logs/
 run/
 history.json
 profiles.json
+gateway.json
+gateway-state.json
+gateway-audit.jsonl
+gateway-audit.jsonl.1
 *.log
 *.tmp
 

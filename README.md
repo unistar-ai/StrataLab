@@ -63,7 +63,7 @@ Chromium 看到的是 1920×1040 DIP、`devicePixelRatio=2`，所以 1400×940 �
 
 代价是这套窗口是一棵独立的 Chromium 进程树（约 150–300 MB 内存）。
 
-## 七个页签
+## 九个页签
 
 | 页签 | 内容 |
 |---|---|
@@ -73,10 +73,66 @@ Chromium 看到的是 1920×1040 DIP、`devicePixelRatio=2`，所以 1400×940 �
 | **对话** | 直接和引擎聊天：思考强度、max_tokens、系统提示；流式输出，每条显示 tok/s、tokens、首字延迟；可中途停止 |
 | **基准** | 单请求测速（提示词 / tokens / 思考强度）+ 最近记录表（tok/s、tokens、首字、缓存） |
 | **历史** | 启动/测速/对话/下载记录表 + decode 速度走势 + CSV 导出 + 清空 |
+| **公网** | 可选 AI Gateway 的运行状态、今日/累计请求与 token、拒绝数、活动/排队请求、最近 100 条审计元数据 |
 | **日志** | 引擎日志文件切换、正则过滤、跟随滚动 |
-| **设置** | 接入信息、档位参数（ctx / kv / vision / parallel，保存到 `profiles.json`）、说明、关闭方式 |
+| **设置** | 接入信息、公网 Gateway 开关与限额、API Key 生成、档位参数（ctx / kv / vision / parallel）、关闭方式 |
 
 页签可以用地址栏直达：`http://127.0.0.1:8765/#models`、`#term`、`#bench`、`#logs`……
+
+## 可选公网 AI Gateway
+
+「设置 → 公网 API Gateway」可以启用一个轻量反向代理，供 FRP 将本地 Strata 开放为个人公网 API。
+默认关闭，仍使用 Python 标准库，不需要安装新依赖。
+
+```text
+公网客户端
+  → HTTPS / API Key
+  → 云服务器 Caddy 或 Nginx
+  → FRP 隧道
+  → 本机 127.0.0.1:18080 Gateway
+  → 本机 127.0.0.1:8080 Strata
+```
+
+### 启用步骤
+
+1. 在设置页点击「生成 / 更换 API Key」。完整 Key **只在生成时返回一次**；本地 `gateway.json` 只保存 SHA-256 和 Key ID，刷新页面后无法取回完整 Key。
+2. 填写公网 Base URL（例如 `https://api.example.com`）、本机端口和保护限额，点击「保存并应用」。
+3. 在云服务器配置 HTTPS，并把请求反代到 FRP 暴露的 Gateway 端口。公网只开放 `443`，不要公开 StrataLab `8765`、Strata `8080` 或 FRP 管理端口。
+4. 本机 `frpc.toml` 只转发 Gateway，例如：
+
+   ```toml
+   [[proxies]]
+   name = "strata-gateway"
+   type = "tcp"
+   localIP = "127.0.0.1"
+   localPort = 18080
+   remotePort = 18080
+   ```
+
+   云服务器上应通过防火墙限制 `18080`，只让本机 Caddy/Nginx 访问，再经 `443` 对外服务。
+
+公网 Base URL 只用于在页面展示接入地址；Gateway **不负责申请 TLS 证书，也不会自动修改 FRP/云服务器配置**。
+Gateway 跟随 StrataLab 进程运行：退出 StrataLab 后，公网 API 也不可用。Strata 引擎本身可以独立停止或启动。
+
+### 内置保护
+
+- `Authorization: Bearer <Key>` 或 `X-API-Key` 鉴权；更换 Key 后旧 Key 立即失效。
+- 只允许 `GET /v1/models`、`POST /v1/chat/completions`、`POST /v1/messages`，不代理管理 API、终端或任意路径。
+- 聊天请求的 `model` 必须等于当前引擎模型，`max_tokens` 必填且不能超过限额。
+- 默认请求体最大 4 MiB、30 请求/分钟、每日 1,000,000 tokens、单次输出最多 8192 tokens。
+- 上游固定单并发；默认最多再等待 2 个请求，排队超过 30 秒或队列已满返回 429。
+- 支持 OpenAI 与 Anthropic 的非流式响应和 SSE；流式响应逐行刷新，不在 Gateway 缓冲完整内容。
+- 用量和每日额度持久化到 `gateway-state.json`，重启后不清零。
+
+远程客户端的 `max_tokens` 也必须遵守限额；例如 DSH/Pi 若配置为 32768，需要在客户端调低，或在设置页提高 Gateway 上限（最高 32768）。
+
+### 审计与隐私
+
+「公网」页显示今日/累计请求、token、拒绝数、活动与排队请求，以及最近 100 条审计记录。每条记录只有时间、Key ID、路由、模型、状态码、耗时、输入/输出 token 和错误类别：
+
+- 不记录完整 API Key，不保存提示词、消息或生成内容。
+- 审计写入 `gateway-audit.jsonl`，超过 8 MiB 时轮转为一个 `.jsonl.1` 备份。
+- 「清空审计与用量」会同时清空审计文件和全部计数，且不可撤销。
 
 ## 内置终端
 
@@ -143,6 +199,9 @@ strata serve: prompt 24 tokens = 17 reused + 7 read in 269 ms (26.0 tok/s),
 |---|---|
 | `profiles.json` | 档位参数（可被设置页改写；缺失时用内置默认） |
 | `history.json` | 运行记录，最多 300 条 |
+| `gateway.json` | 可选 Gateway 配置、Key 哈希与 Key ID；不含完整 API Key |
+| `gateway-state.json` | 每日和累计请求/token 计数，重启后保留 |
+| `gateway-audit.jsonl` | 不含消息内容的审计元数据，超过 8 MiB 轮转 |
 | `logs/launch-<id>-<ts>.log` | 每次 `strata.cmd launch` 的原始输出 |
 | `logs/ui.log` | 控制台自己的生命周期（启动 / 窗口出现 / 关窗退出），排查"为什么没了"看这里 |
 | `logs/window.log` | 每次开窗的记录（用哪个浏览器、URL、尺寸） |
@@ -156,6 +215,9 @@ strata serve: prompt 24 tokens = 17 reused + 7 read in 269 ms (26.0 tok/s),
 |---|---|---|
 | GET | `/api/status` | health、VRAM、RAM、profiles、任务、stale 标记、引擎指标 |
 | GET | `/api/stats` | 服务计数（`run` 本次运行 / `all` 该日志全部）+ 专家缓存命中 + 上一条请求 |
+| GET/POST | `/api/gateway` | 读取监控 / 更新可选 Gateway 配置 |
+| POST | `/api/gateway/key` | 生成并更换 API Key；完整 Key 仅本次返回 |
+| POST | `/api/gateway/clear` | 清空 Gateway 审计和用量 |
 | GET | `/api/meta` | `/props` 摘要：构建版本、模型路径、槽位、采样默认值（不返回 10 KB 的 chat template） |
 | GET | `/api/live` | 当前请求状态、进度、速度、耗时及最近 60 个 Prefill/Decode 速度采样点 |
 | GET | `/api/metrics` | 采样序列（每 2 秒，最多 300 点）+ 实时解析的引擎统计 |
@@ -217,7 +279,7 @@ strata serve: prompt 24 tokens = 17 reused + 7 read in 269 ms (26.0 tok/s),
 - **端口 8765 固定**（要改就改 `app.py` 里的 `PORT`）。
 - **取消对话/测速只断开本端连接**：引擎可能把这一段生成完，紧接着的请求首字会变慢。
 - **内置下载器只有单连接**：hf-mirror 上约 2 MB/s；大批量请用 `bench\parallel_dl.py`（6 路分段 + 校验）。
-- **不做鉴权**：只绑 127.0.0.1，别改 0.0.0.0。
+- **管理界面不做鉴权**：`8765` 只绑 127.0.0.1，别改 0.0.0.0。公网客户端应走带 API Key 的 Gateway，而不是暴露管理端口。
 - 趋势图在页签不可见时停止刷新（省 CPU），切回来会立刻重画。
 - **不弹黑框**：采样不 `spawn` 进程——显存由一个常驻的 `nvidia-smi --loop-ms=2000` 提供，
   进程检查改用 Toolhelp32（ctypes），`strata.cmd` / `--stop` 这类一次性调用带 `CREATE_NO_WINDOW`。
