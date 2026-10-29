@@ -1635,7 +1635,8 @@ function renderKeyTable(keys){
         + '<td><div class="btnrow"><select class="key-edit-unlimited" data-id="' + k.id
         + '" onchange="keyEditQuotaMode(\'' + k.id + '\')">' + options + '</select>'
         + '<input class="key-edit-daily-m" data-id="' + k.id + '" type="number" min="0" max="1000000" step="0.0001" value="'
-        + value + '" ' + (mode === "unlimited" ? "disabled" : "") + ' style="width:90px" />'
+        + value + '" ' + (mode === "unlimited" ? "disabled" : "") + ' style="width:90px;'
+        + (mode === "unlimited" ? "display:none" : "") + '" />'
         + '<span class="mute key-edit-unit" data-id="' + k.id + '">' + unit + '</span></div></td><td class="'
         + (k.enabled ? "okc" : "errc") + '">' + (k.enabled ? "有效" : "已停用") + '</td><td><div class="btnrow">'
         + '<button class="mini" onclick="saveKey(\'' + k.id + '\')">保存</button>'
@@ -1650,7 +1651,9 @@ function keyQuotaMode(){
 }
 function keyEditQuotaMode(id){
   const select = document.querySelector('.key-edit-unlimited[data-id="' + id + '"]');
-  document.querySelector('.key-edit-daily-m[data-id="' + id + '"]').disabled = select.value === "unlimited";
+  const input = document.querySelector('.key-edit-daily-m[data-id="' + id + '"]');
+  input.disabled = select.value === "unlimited";
+  input.style.display = select.value === "unlimited" ? "none" : "";
   document.querySelector('.key-edit-unit[data-id="' + id + '"]').textContent =
     select.value === "tokens" ? "M" : (select.value === "CNY" ? "元" : (select.value === "USD" ? "USD" : ""));
 }
