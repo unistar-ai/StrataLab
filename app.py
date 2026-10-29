@@ -1607,7 +1607,8 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/gateway/key":
             try:
-                key, public = GATEWAY.generate_key(data.get("name"), data.get("daily_tokens"))
+                key, public = GATEWAY.generate_key(
+                    data.get("name"), data["daily_tokens"] if "daily_tokens" in data else Ellipsis)
                 return self.reply({"ok": True, "key": key, "gateway": public})
             except (ValueError, OSError) as exc:
                 return self.reply({"ok": False, "error": str(exc)}, 400)

@@ -96,7 +96,7 @@ Chromium 看到的是 1920×1040 DIP、`devicePixelRatio=2`，所以 1400×940 �
 
 ### 启用步骤
 
-1. 在「密钥」页填写名称和独立每日额度，点击「注册 API Key」。完整 Key **只在注册时返回一次**；本地 `gateway.json` 只保存 SHA-256 和 Key ID，刷新页面后无法取回完整 Key。
+1. 在「密钥」页填写名称，并选择每日额度为“无限”或自定义 M（百万）tokens，点击「注册 API Key」。完整 Key **只在注册时返回一次**；本地 `gateway.json` 只保存 SHA-256 和 Key ID，刷新页面后无法取回完整 Key。
 2. 在设置页填写公网 Base URL（例如 `https://api.example.com`）、本机端口和保护限额，点击「保存并应用」。
 3. 在云服务器配置 HTTPS，并把请求反代到 FRP 暴露的 Gateway 端口。公网只开放 `443`，不要公开 StrataLab `8765`、Strata `8080` 或 FRP 管理端口。
 4. 本机 `frpc.toml` 只转发 Gateway，例如：
@@ -118,7 +118,7 @@ Gateway 跟随 StrataLab 进程运行：退出 StrataLab 后，公网 API 也不
 ### 内置保护
 
 - `Authorization: Bearer <Key>` 或 `X-API-Key` 鉴权；支持多个命名 Key，永久删除后立即失效，历史审计保留。
-- 每个 Key 有独立每日 token 额度，`0` 表示不限制；设置页的全局每日额度只作为新 Key 的默认值。
+- 每个 Key 有独立每日额度。界面可选择“无限”或自定义 M tokens；API 中 `null` 表示不限，数字 `0` 表示每天 0 tokens 并拒绝请求。旧配置中代表不限的 `0` 会自动迁移为 `null`；设置页的全局每日额度只作为新 Key 的默认值。
 - 只允许 `GET /v1/models`、`POST /v1/chat/completions`、`POST /v1/messages`，不代理管理 API、终端或任意路径。
 - 聊天请求的 `model` 必须等于当前引擎模型，输出不能超过限额。OpenAI 同时接受 `max_tokens` 和 `max_completion_tokens`，两者都省略时应用 Gateway 上限；Anthropic 按协议要求 `max_tokens` 必填。
 - 默认请求体最大 4 MiB、30 请求/分钟、单次输出最多 8192 tokens。

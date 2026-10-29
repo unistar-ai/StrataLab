@@ -22,6 +22,7 @@ DEFAULT_CONFIG = {
     "key_hash": "",
     "key_id": "",
     "keys": [],
+    "quota_version": 2,
     "rate_per_min": 30,
     "daily_tokens": 1000000,
     "max_body_bytes": 4194304,
@@ -34,7 +35,6 @@ DEFAULT_CONFIG = {
 LIMITS = {
     "port": (1024, 65535),
     "rate_per_min": (1, 1000),
-    "daily_tokens": (0, 1000000000),
     "max_body_bytes": (65536, 67108864),
     "max_tokens": (1, 32768),
     "queue_size": (0, 20),
@@ -49,18 +49,27 @@ ALLOWED_ROUTES = {
 }
 
 
+def validate_quota(daily_tokens):
+    if daily_tokens is None:
+        return None
+    if (isinstance(daily_tokens, bool) or not isinstance(daily_tokens, int)
+            or not 0 <= daily_tokens <= 1000000000):
+        raise ValueError("每日额度必须是 0–1000000000 之间的整数，null 为不限")
+    return daily_tokens
+
+
 def validate_key(name, daily_tokens):
     if not isinstance(name, str) or not name.strip() or len(name.strip()) > 40:
         raise ValueError("Key 名称必须为 1–40 个字符")
-    if (isinstance(daily_tokens, bool) or not isinstance(daily_tokens, int)
-            or not 0 <= daily_tokens <= 1000000000):
-        raise ValueError("每日额度必须是 0–1000000000 之间的整数，0 为不限")
-    return name.strip(), daily_tokens
+    return name.strip(), validate_quota(daily_tokens)
 
 
 def validate_config(data):
     if not isinstance(data, dict):
         raise ValueError("配置必须是对象")
+    version = data.get("quota_version", 1)
+    if version not in (1, 2):
+        raise ValueError("不支持的额度配置版本")
     cfg = dict(DEFAULT_CONFIG)
     for key, value in data.items():
         if key in cfg:
@@ -71,6 +80,9 @@ def validate_config(data):
         value = cfg[key]
         if isinstance(value, bool) or not isinstance(value, int) or not low <= value <= high:
             raise ValueError(f"{key} 必须是 {low}–{high} 之间的整数")
+    if version == 1 and cfg["daily_tokens"] == 0:
+        cfg["daily_tokens"] = None
+    cfg["daily_tokens"] = validate_quota(cfg["daily_tokens"])
     if not isinstance(cfg["public_url"], str):
         raise ValueError("public_url 必须是字符串")
     url = cfg["public_url"].strip().rstrip("/")
@@ -96,6 +108,9 @@ def validate_config(data):
     for item in cfg["keys"]:
         if not isinstance(item, dict):
             raise ValueError("Key 条目必须是对象")
+        item = dict(item)
+        if version == 1 and item.get("daily_tokens") == 0:
+            item["daily_tokens"] = None
         key_id = item.get("id")
         key_hash = item.get("hash")
         if (not isinstance(key_id, str) or not key_id or len(key_id) > 64 or key_id in ids
@@ -113,6 +128,7 @@ def validate_config(data):
     cfg["keys"] = keys
     cfg["key_hash"] = ""
     cfg["key_id"] = ""
+    cfg["quota_version"] = 2
     return cfg
 
 
@@ -277,9 +293,9 @@ class GatewayService:
             self.start()
         return self.public()
 
-    def generate_key(self, name=None, daily_tokens=None):
+    def generate_key(self, name=None, daily_tokens=Ellipsis):
         with self.lock:
-            if daily_tokens is None:
+            if daily_tokens is Ellipsis:
                 daily_tokens = self.config["daily_tokens"]
             name, daily_tokens = validate_key(name or f"API Key {len(self.config['keys']) + 1}",
                                               daily_tokens)
@@ -353,7 +369,7 @@ class GatewayService:
 
     def _check_quota(self, key_id):
         item = self._find_key(key_id)
-        if not item or item["daily_tokens"] == 0:
+        if not item or item["daily_tokens"] is None:
             return
         day = self.state["key_days"].get(key_id, {}).get(self._day(), {})
         if int(day.get("tokens", 0)) >= item["daily_tokens"]:
