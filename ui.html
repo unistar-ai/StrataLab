@@ -600,7 +600,7 @@
       </div>
       <div class="tools"><button class="mini" onclick="loadKeys()">刷新</button></div>
     </div>
-    <div class="banner info show"><span>每个 Key 独立计算每日额度。选择“无限”才不限制；自定义 0 表示每日 0 tokens。删除后历史审计保留，完整 Key 只在注册时显示一次。</span></div>
+    <div class="banner info show"><span>每日额度支持无限、M tokens、CNY 或 USD。金额按 DeepSeek 峰价估算；0 表示真实零额度。删除后历史审计保留，完整 Key 只在注册时显示一次。</span></div>
     <div class="card">
       <h2>注册新 Key</h2>
       <div class="btnrow">
@@ -608,15 +608,18 @@
         <label class="inline">每日额度
           <select id="key-quota-mode" onchange="keyQuotaMode()">
             <option value="unlimited">无限</option>
-            <option value="custom">自定义</option>
+            <option value="tokens">tokens</option>
+            <option value="CNY">CNY（人民币）</option>
+            <option value="USD">USD（美元）</option>
           </select>
         </label>
         <span class="inline" id="key-daily-wrap" style="display:none">
-          <input id="key-daily-m" type="number" min="0" max="1000" step="0.1" value="1" style="width:110px" /> M tokens
+          <input id="key-daily-value" type="number" min="0" max="1000000" step="0.0001" value="1" style="width:110px" />
+          <span id="key-daily-unit">M tokens</span>
         </span>
         <button class="primary" onclick="createKey()">注册 API Key</button>
       </div>
-      <div class="mute" style="margin-top:8px">名称不可重复；自定义以 M（百万）tokens 为单位，0 表示每天 0 tokens。</div>
+      <div class="mute" style="margin-top:8px">tokens 以 M（百万）为单位；金额按 DeepSeek 官方峰值价计算，0 表示真实零额度。</div>
       <div id="key-created" style="margin-top:10px"></div>
     </div>
     <div class="card">
@@ -1539,7 +1542,7 @@ function renderGateway(data){
     + '</div><div class="v">' + value + '</div><div class="s">' + sub + "</div></div>";
   $("gateway-kpis").innerHTML =
     kpi("今日请求", compact(today.requests), selected ? "按 " + esc(selected.name) + " 筛选" : "累计 " + compact(data.total_requests)) +
-    kpi("今日 tokens", compact(today.tokens), selected ? "当前 Key 独立用量" : "累计 " + compact(data.total_tokens)) +
+    kpi("今日 tokens", compact(today.tokens), "DeepSeek 峰价 " + cny(today.cost_cny || 0) + " / " + usd(today.cost_usd || 0)) +
     kpi("今日拒绝", compact(today.rejected), "鉴权 / 限额 / 上游错误") +
     kpi("当前请求", nf(g.active), "排队 " + nf(g.waiting) + " · 上限 " + g.queue_size);
   const base = g.public_url || "";
@@ -1575,7 +1578,8 @@ function renderGateway(data){
         + '</td><td>' + esc(keyName) + '<div class="mute mono">' + esc(it.key_id) + '</div></td>'
         + '<td class="mono" title="' + esc(it.model || "") + '">' + esc(it.route) + (it.stream ? " · SSE" : "")
         + '</td><td class="' + (ok ? "okc" : "errc") + '" title="' + esc(it.error || "") + '">' + it.status
-        + '</td><td>' + nf(it.ms) + ' ms</td><td>' + compact(it.total_tokens) + '</td></tr>';
+        + '</td><td>' + nf(it.ms) + ' ms</td><td>' + compact(it.total_tokens)
+        + '<div class="mute">' + cny(it.cost_cny || 0) + ' / ' + usd(it.cost_usd || 0) + '</div></td></tr>';
     }).join("") : '<tr><td colspan="6" class="note">还没有请求</td></tr>');
 }
 async function loadGateway(){
@@ -1621,18 +1625,21 @@ async function loadKeys(){
   } catch (e){ toast(e.message, true); }
 }
 function renderKeyTable(keys){
-  $("key-table").innerHTML = '<tr><th>名称</th><th>Key ID</th><th>今日 tokens</th><th>每日额度（M tokens）</th><th>状态</th><th>操作</th></tr>'
+  $("key-table").innerHTML = '<tr><th>名称</th><th>Key ID</th><th>今日用量</th><th>每日额度</th><th>状态</th><th>操作</th></tr>'
     + (keys.length ? keys.map(k => {
-      const unlimited = k.daily_tokens === null;
+      const mode = k.daily_money ? k.daily_money.currency : (k.daily_tokens === null ? "unlimited" : "tokens");
+      const value = k.daily_money ? k.daily_money.amount : (k.daily_tokens === null ? 0 : k.daily_tokens / 1000000);
+      const unit = mode === "tokens" ? "M" : (mode === "CNY" ? "元" : (mode === "USD" ? "USD" : ""));
+      const options = [["unlimited","无限"],["tokens","tokens"],["CNY","CNY"],["USD","USD"]].map(o =>
+        '<option value="' + o[0] + '" ' + (mode === o[0] ? "selected" : "") + '>' + o[1] + '</option>').join("");
       return '<tr><td><input class="key-edit-name" data-id="' + k.id + '" maxlength="40" value="'
-        + esc(k.name) + '" style="width:150px" /></td><td class="mono">' + k.id + '</td><td>' + compact(k.today_tokens)
-        + '<div class="mute">' + k.today_requests + ' 次请求</div></td><td><div class="btnrow">'
-        + '<select class="key-edit-unlimited" data-id="' + k.id + '" onchange="keyEditQuotaMode(\'' + k.id + '\')">'
-        + '<option value="unlimited" ' + (unlimited ? "selected" : "") + '>无限</option>'
-        + '<option value="custom" ' + (unlimited ? "" : "selected") + '>自定义</option></select>'
-        + '<input class="key-edit-daily-m" data-id="' + k.id + '" type="number" min="0" max="1000" step="0.1" value="'
-        + (unlimited ? 0 : k.daily_tokens / 1000000) + '" ' + (unlimited ? "disabled" : "")
-        + ' style="width:92px" /><span class="mute">M</span></div></td><td class="'
+        + esc(k.name) + '" style="width:140px" /></td><td class="mono">' + k.id + '</td><td>' + compact(k.today_tokens)
+        + ' tok<div class="mute">' + cny(k.today_cost_cny) + ' / ' + usd(k.today_cost_usd) + '</div></td>'
+        + '<td><div class="btnrow"><select class="key-edit-unlimited" data-id="' + k.id
+        + '" onchange="keyEditQuotaMode(\'' + k.id + '\')">' + options + '</select>'
+        + '<input class="key-edit-daily-m" data-id="' + k.id + '" type="number" min="0" max="1000000" step="0.0001" value="'
+        + value + '" ' + (mode === "unlimited" ? "disabled" : "") + ' style="width:90px" />'
+        + '<span class="mute key-edit-unit" data-id="' + k.id + '">' + unit + '</span></div></td><td class="'
         + (k.enabled ? "okc" : "errc") + '">' + (k.enabled ? "有效" : "已停用") + '</td><td><div class="btnrow">'
         + '<button class="mini" onclick="saveKey(\'' + k.id + '\')">保存</button>'
         + '<button class="mini danger" onclick="deleteKey(\'' + k.id + '\')">删除</button>'
@@ -1640,11 +1647,15 @@ function renderKeyTable(keys){
     }).join("") : '<tr><td colspan="6" class="note">还没有 API Key</td></tr>');
 }
 function keyQuotaMode(){
-  $("key-daily-wrap").style.display = $("key-quota-mode").value === "custom" ? "flex" : "none";
+  const mode = $("key-quota-mode").value;
+  $("key-daily-wrap").style.display = mode === "unlimited" ? "none" : "flex";
+  $("key-daily-unit").textContent = mode === "tokens" ? "M tokens" : (mode === "CNY" ? "元" : "USD");
 }
 function keyEditQuotaMode(id){
   const select = document.querySelector('.key-edit-unlimited[data-id="' + id + '"]');
   document.querySelector('.key-edit-daily-m[data-id="' + id + '"]').disabled = select.value === "unlimited";
+  document.querySelector('.key-edit-unit[data-id="' + id + '"]').textContent =
+    select.value === "tokens" ? "M" : (select.value === "CNY" ? "元" : (select.value === "USD" ? "USD" : ""));
 }
 function quotaFromM(value){
   const text = String(value).trim();
@@ -1653,13 +1664,21 @@ function quotaFromM(value){
     throw new Error("每日额度必须是 0–1000 之间的数字（M tokens）");
   return Math.round(number * 1000000);
 }
+function quotaPayload(mode, value){
+  if (mode === "unlimited") return { daily_tokens:null, daily_money:null };
+  if (mode === "tokens") return { daily_tokens:quotaFromM(value), daily_money:null };
+  const text = String(value).trim(), amount = Number(text);
+  if (!text || !Number.isFinite(amount) || amount < 0 || amount > 1000000)
+    throw new Error("金额必须是 0–1000000 之间的数字");
+  return { daily_tokens:null, daily_money:{ currency:mode, amount:amount } };
+}
 async function createKey(){
   const name = $("key-name").value.trim();
   if (!name){ toast("请先填写 Key 名称", true); return; }
   try {
-    const daily = $("key-quota-mode").value === "unlimited" ? null : quotaFromM($("key-daily-m").value);
+    const quota = quotaPayload($("key-quota-mode").value, $("key-daily-value").value);
     const r = await api("/api/gateway/key", { method:"POST", body:JSON.stringify({
-      name:name, daily_tokens:daily
+      name:name, daily_tokens:quota.daily_tokens, daily_money:quota.daily_money
     }) });
     $("key-created").innerHTML = '<div class="row"><span class="label">完整 Key</span><code>' + esc(r.key)
       + '</code><button class="copy" data-copy="' + esc(r.key)
@@ -1671,11 +1690,12 @@ async function createKey(){
 }
 async function saveKey(id){
   try {
-    const unlimited = document.querySelector('.key-edit-unlimited[data-id="' + id + '"]').value === "unlimited";
+    const mode = document.querySelector('.key-edit-unlimited[data-id="' + id + '"]').value;
+    const quota = quotaPayload(mode, document.querySelector('.key-edit-daily-m[data-id="' + id + '"]').value);
     await api("/api/gateway/key/update", { method:"POST", body:JSON.stringify({
       id:id,
       name:document.querySelector('.key-edit-name[data-id="' + id + '"]').value.trim(),
-      daily_tokens:unlimited ? null : quotaFromM(document.querySelector('.key-edit-daily-m[data-id="' + id + '"]').value)
+      daily_tokens:quota.daily_tokens, daily_money:quota.daily_money
     }) });
     toast("Key 已更新"); loadKeys();
   } catch (e){ toast(e.message, true); }

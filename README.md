@@ -96,7 +96,7 @@ Chromium 看到的是 1920×1040 DIP、`devicePixelRatio=2`，所以 1400×940 �
 
 ### 启用步骤
 
-1. 在「密钥」页填写名称，并选择每日额度为“无限”或自定义 M（百万）tokens，点击「注册 API Key」。完整 Key **只在注册时返回一次**；本地 `gateway.json` 只保存 SHA-256 和 Key ID，刷新页面后无法取回完整 Key。
+1. 在「密钥」页填写名称，并选择每日额度为“无限”、M（百万）tokens、人民币或美元，点击「注册 API Key」。完整 Key **只在注册时返回一次**；本地 `gateway.json` 只保存 SHA-256 和 Key ID，刷新页面后无法取回完整 Key。
 2. 在设置页填写公网 Base URL（例如 `https://api.example.com`）、本机端口和保护限额，点击「保存并应用」。
 3. 在云服务器配置 HTTPS，并把请求反代到 FRP 暴露的 Gateway 端口。公网只开放 `443`，不要公开 StrataLab `8765`、Strata `8080` 或 FRP 管理端口。
 4. 本机 `frpc.toml` 只转发 Gateway，例如：
@@ -118,7 +118,8 @@ Gateway 跟随 StrataLab 进程运行：退出 StrataLab 后，公网 API 也不
 ### 内置保护
 
 - `Authorization: Bearer <Key>` 或 `X-API-Key` 鉴权；支持多个命名 Key，永久删除后立即失效，历史审计保留。
-- 每个 Key 有独立每日额度。界面可选择“无限”或自定义 M tokens；API 中 `null` 表示不限，数字 `0` 表示每天 0 tokens 并拒绝请求。旧配置中代表不限的 `0` 会自动迁移为 `null`；设置页的全局每日额度只作为新 Key 的默认值。
+- 每个 Key 有独立每日额度。界面可选择“无限”、M tokens、人民币或美元；API 中 token 额度的 `null` 表示不限，数字 `0` 表示真实零额度。金额使用 `daily_money: {currency: CNY|USD, amount}`，`null` 表示不限，任一额度达到即拒绝请求。旧配置中代表不限的 `0` 会自动迁移为 `null`；设置页的全局每日额度只作为新 Key 的默认值。
+- 金额按 DeepSeek Flash 官方峰值价计算：美元输入缓存命中 $0.006/M、未命中 $0.3/M、输出 $1.2/M；人民币分别为 0.04 元/M、2 元/M、8 元/M。两种货币分别按官方报价计算，不做汇率换算。
 - 只允许 `GET /v1/models`、`POST /v1/chat/completions`、`POST /v1/messages`，不代理管理 API、终端或任意路径。
 - 聊天请求的 `model` 必须等于当前引擎模型，输出不能超过限额。OpenAI 同时接受 `max_tokens` 和 `max_completion_tokens`，两者都省略时应用 Gateway 上限；Anthropic 按协议要求 `max_tokens` 必填。
 - 默认请求体最大 4 MiB、30 请求/分钟、单次输出最多 8192 tokens。
@@ -130,7 +131,7 @@ Gateway 跟随 StrataLab 进程运行：退出 StrataLab 后，公网 API 也不
 
 ### 审计与隐私
 
-「公网」页显示今日/累计请求、token、拒绝数、活动与排队请求，以及最近 100 条审计记录。可以按 API Key 筛选记录和今日统计；每条记录只有时间、Key 名称与 ID、路由、模型、状态码、耗时、输入/输出 token 和错误类别：
+「公网」页显示今日/累计请求、token、拒绝数、活动与排队请求，以及最近 100 条审计记录。可以按 API Key 筛选记录和今日统计；每条记录只有时间、Key 名称与 ID、路由、模型、状态码、耗时、输入/缓存/输出 token、DeepSeek 峰价下的人民币与美元成本，以及错误类别：
 
 - 不记录完整 API Key，不保存提示词、消息或生成内容。
 - 审计写入 `gateway-audit.jsonl`，超过 8 MiB 时轮转为一个 `.jsonl.1` 备份。

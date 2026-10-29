@@ -22,7 +22,7 @@ DEFAULT_CONFIG = {
     "key_hash": "",
     "key_id": "",
     "keys": [],
-    "quota_version": 2,
+    "quota_version": 3,
     "rate_per_min": 30,
     "daily_tokens": 1000000,
     "max_body_bytes": 4194304,
@@ -58,6 +58,18 @@ def validate_quota(daily_tokens):
     return daily_tokens
 
 
+def validate_money(daily_money):
+    if daily_money is None:
+        return None
+    if not isinstance(daily_money, dict) or daily_money.get("currency") not in ("CNY", "USD"):
+        raise ValueError("金额额度必须指定 CNY 或 USD")
+    amount = daily_money.get("amount")
+    if (isinstance(amount, bool) or not isinstance(amount, (int, float))
+            or not 0 <= amount <= 1000000):
+        raise ValueError("金额必须是 0–1000000 之间的数字")
+    return {"currency": daily_money["currency"], "amount": float(amount)}
+
+
 def validate_key(name, daily_tokens):
     if not isinstance(name, str) or not name.strip() or len(name.strip()) > 40:
         raise ValueError("Key 名称必须为 1–40 个字符")
@@ -68,7 +80,7 @@ def validate_config(data):
     if not isinstance(data, dict):
         raise ValueError("配置必须是对象")
     version = data.get("quota_version", 1)
-    if version not in (1, 2):
+    if version not in (1, 2, 3):
         raise ValueError("不支持的额度配置版本")
     cfg = dict(DEFAULT_CONFIG)
     for key, value in data.items():
@@ -124,11 +136,12 @@ def validate_config(data):
             raise ValueError("Key created_at 无效")
         ids.add(key_id)
         keys.append({"id": key_id, "name": name, "hash": key_hash,
-                     "daily_tokens": daily, "enabled": item["enabled"], "created_at": created})
+                     "daily_tokens": daily, "daily_money": validate_money(item.get("daily_money")),
+                     "enabled": item["enabled"], "created_at": created})
     cfg["keys"] = keys
     cfg["key_hash"] = ""
     cfg["key_id"] = ""
-    cfg["quota_version"] = 2
+    cfg["quota_version"] = 3
     return cfg
 
 
@@ -227,10 +240,12 @@ class GatewayService:
                 day = self.state["key_days"].get(item["id"], {}).get(self._day(), {})
                 result.append({
                     "id": item["id"], "name": item["name"],
-                    "daily_tokens": item["daily_tokens"], "enabled": item["enabled"],
-                    "created_at": item["created_at"],
+                    "daily_tokens": item["daily_tokens"], "daily_money": item["daily_money"],
+                    "enabled": item["enabled"], "created_at": item["created_at"],
                     "today_tokens": int(day.get("tokens", 0)),
                     "today_requests": int(day.get("requests", 0)),
+                    "today_cost_cny": float(day.get("cost_cny", 0)),
+                    "today_cost_usd": float(day.get("cost_usd", 0)),
                 })
             return result
 
@@ -293,10 +308,13 @@ class GatewayService:
             self.start()
         return self.public()
 
-    def generate_key(self, name=None, daily_tokens=Ellipsis):
+    def generate_key(self, name=None, daily_tokens=Ellipsis, daily_money=Ellipsis):
         with self.lock:
             if daily_tokens is Ellipsis:
                 daily_tokens = self.config["daily_tokens"]
+            if daily_money is Ellipsis:
+                daily_money = None
+            daily_money = validate_money(daily_money)
             name, daily_tokens = validate_key(name or f"API Key {len(self.config['keys']) + 1}",
                                               daily_tokens)
             if any(item["name"].casefold() == name.casefold() for item in self.config["keys"]):
@@ -310,7 +328,8 @@ class GatewayService:
                 key_id = digest[:10]
             self.config["keys"].append({
                 "id": key_id, "name": name, "hash": digest,
-                "daily_tokens": daily_tokens, "enabled": True, "created_at": time.time(),
+                "daily_tokens": daily_tokens, "daily_money": daily_money,
+                "enabled": True, "created_at": time.time(),
             })
             self._save_json(self.config_file, self.config)
             return key, self.public()
@@ -324,13 +343,14 @@ class GatewayService:
                 raise ValueError("Key 不存在")
             name, daily = validate_key(data.get("name", item["name"]),
                                        data.get("daily_tokens", item["daily_tokens"]))
+            daily_money = validate_money(data.get("daily_money", item["daily_money"]))
             if any(other["id"] != key_id and other["name"].casefold() == name.casefold()
                    for other in self.config["keys"]):
                 raise ValueError("Key 名称已存在")
             enabled = data.get("enabled", item["enabled"])
             if not isinstance(enabled, bool):
                 raise ValueError("enabled 必须是布尔值")
-            item.update(name=name, daily_tokens=daily, enabled=enabled)
+            item.update(name=name, daily_tokens=daily, daily_money=daily_money, enabled=enabled)
             self._save_json(self.config_file, self.config)
             return self.keys_public()
 
@@ -369,11 +389,18 @@ class GatewayService:
 
     def _check_quota(self, key_id):
         item = self._find_key(key_id)
-        if not item or item["daily_tokens"] is None:
+        if not item:
             return
         day = self.state["key_days"].get(key_id, {}).get(self._day(), {})
-        if int(day.get("tokens", 0)) >= item["daily_tokens"]:
+        if item["daily_tokens"] is not None and int(day.get("tokens", 0)) >= item["daily_tokens"]:
             raise Reject(429, f"Key「{item['name']}」已达到今日 token 额度")
+        money = item["daily_money"]
+        if money is not None:
+            currency = money["currency"]
+            cost = float(day.get("cost_usd" if currency == "USD" else "cost_cny", 0))
+            if cost >= money["amount"]:
+                symbol = "$" if currency == "USD" else "¥"
+                raise Reject(429, f"Key「{item['name']}」已达到今日金额额度 {symbol}{money['amount']:g}")
 
     def _enter_queue(self):
         with self.lock:
@@ -421,6 +448,8 @@ class GatewayService:
                 day["rejected"] = int(day.get("rejected", 0)) + 1
             tokens = int(row.get("total_tokens") or 0)
             day["tokens"] = int(day.get("tokens", 0)) + tokens
+            day["cost_cny"] = float(day.get("cost_cny", 0)) + float(row.get("cost_cny") or 0)
+            day["cost_usd"] = float(day.get("cost_usd", 0)) + float(row.get("cost_usd") or 0)
             self.state["total_requests"] = int(self.state.get("total_requests", 0)) + 1
             self.state["total_tokens"] = int(self.state.get("total_tokens", 0)) + tokens
             for old in sorted(self.state["days"])[:-62]:
@@ -433,6 +462,8 @@ class GatewayService:
                 if row["status"] >= 400:
                     key_day["rejected"] = int(key_day.get("rejected", 0)) + 1
                 key_day["tokens"] = int(key_day.get("tokens", 0)) + tokens
+                key_day["cost_cny"] = float(key_day.get("cost_cny", 0)) + float(row.get("cost_cny") or 0)
+                key_day["cost_usd"] = float(key_day.get("cost_usd", 0)) + float(row.get("cost_usd") or 0)
                 for old in sorted(key_days)[:-62]:
                     key_days.pop(old, None)
             try:
@@ -539,6 +570,11 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 usage["prompt"] = direct["input_tokens"]
             if isinstance(direct.get("output_tokens"), int):
                 usage["completion"] = direct["output_tokens"]
+            details = direct.get("prompt_tokens_details")
+            if isinstance(details, dict) and isinstance(details.get("cached_tokens"), int):
+                usage["cached"] = details["cached_tokens"]
+            if isinstance(direct.get("cache_read_input_tokens"), int):
+                usage["cached"] = direct["cache_read_input_tokens"]
         message = chunk.get("message")
         if isinstance(message, dict):
             GatewayHandler._usage(usage, {"usage": message.get("usage")})
@@ -675,6 +711,10 @@ class GatewayHandler(BaseHTTPRequestHandler):
         finally:
             prompt = int(usage.get("prompt") or 0)
             completion = int(usage.get("completion") or 0)
+            cached = min(prompt, max(0, int(usage.get("cached") or 0)))
+            uncached = max(0, prompt - cached)
+            cost_usd = (cached * 0.006 + uncached * 0.3 + completion * 1.2) / 1000000
+            cost_cny = (cached * 0.04 + uncached * 2 + completion * 8) / 1000000
             gateway._record({
                 "id": uuid.uuid4().hex[:12],
                 "ts": time.time(),
@@ -687,7 +727,10 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 "ms": round((time.monotonic() - started) * 1000),
                 "prompt_tokens": prompt,
                 "completion_tokens": completion,
+                "cached_tokens": cached,
                 "total_tokens": prompt + completion,
+                "cost_cny": cost_cny,
+                "cost_usd": cost_usd,
                 "stream": stream,
                 "error": error,
             })
