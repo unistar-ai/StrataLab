@@ -21,6 +21,7 @@ DEFAULT_CONFIG = {
     "public_url": "",
     "key_hash": "",
     "key_id": "",
+    "keys": [],
     "rate_per_min": 30,
     "daily_tokens": 1000000,
     "max_body_bytes": 4194304,
@@ -46,6 +47,15 @@ ALLOWED_ROUTES = {
     ("POST", "/v1/chat/completions"),
     ("POST", "/v1/messages"),
 }
+
+
+def validate_key(name, daily_tokens):
+    if not isinstance(name, str) or not name.strip() or len(name.strip()) > 40:
+        raise ValueError("Key 名称必须为 1–40 个字符")
+    if (isinstance(daily_tokens, bool) or not isinstance(daily_tokens, int)
+            or not 0 <= daily_tokens <= 1000000000):
+        raise ValueError("每日额度必须是 0–1000000000 之间的整数，0 为不限")
+    return name.strip(), daily_tokens
 
 
 def validate_config(data):
@@ -75,6 +85,34 @@ def validate_config(data):
     for key in ("key_hash", "key_id"):
         if not isinstance(cfg[key], str):
             raise ValueError(f"{key} 必须是字符串")
+    if not isinstance(cfg["keys"], list):
+        raise ValueError("keys 必须是数组")
+    if not cfg["keys"] and cfg["key_hash"]:
+        cfg["keys"] = [{"id": cfg["key_id"], "name": "默认 Key", "hash": cfg["key_hash"],
+                        "daily_tokens": cfg["daily_tokens"], "enabled": True,
+                        "created_at": None}]
+    keys = []
+    ids = set()
+    for item in cfg["keys"]:
+        if not isinstance(item, dict):
+            raise ValueError("Key 条目必须是对象")
+        key_id = item.get("id")
+        key_hash = item.get("hash")
+        if (not isinstance(key_id, str) or not key_id or len(key_id) > 64 or key_id in ids
+                or not isinstance(key_hash, str) or len(key_hash) != 64):
+            raise ValueError("Key ID 或哈希无效")
+        name, daily = validate_key(item.get("name"), item.get("daily_tokens"))
+        if not isinstance(item.get("enabled"), bool):
+            raise ValueError("Key enabled 必须是布尔值")
+        created = item.get("created_at")
+        if created is not None and (isinstance(created, bool) or not isinstance(created, (int, float))):
+            raise ValueError("Key created_at 无效")
+        ids.add(key_id)
+        keys.append({"id": key_id, "name": name, "hash": key_hash,
+                     "daily_tokens": daily, "enabled": item["enabled"], "created_at": created})
+    cfg["keys"] = keys
+    cfg["key_hash"] = ""
+    cfg["key_id"] = ""
     return cfg
 
 
@@ -113,6 +151,10 @@ class GatewayService:
         self.config = self._load_config()
         self.state = self._load_state()
         self.recent = deque(self._read_audit(), maxlen=500)
+        if self.config["keys"] and not self.state["key_days"]:
+            today = self.state["days"].get(self._day())
+            if today:
+                self.state["key_days"][self.config["keys"][0]["id"]] = {self._day(): dict(today)}
 
     def _load_config(self):
         try:
@@ -121,11 +163,13 @@ class GatewayService:
             return dict(DEFAULT_CONFIG)
 
     def _load_state(self):
-        blank = {"total_requests": 0, "total_tokens": 0, "days": {}}
+        blank = {"total_requests": 0, "total_tokens": 0, "days": {}, "key_days": {}}
         try:
             data = json.loads(self.state_file.read_text(encoding="utf-8"))
             if isinstance(data, dict) and isinstance(data.get("days"), dict):
                 blank.update(data)
+            if not isinstance(blank.get("key_days"), dict):
+                blank["key_days"] = {}
         except (OSError, ValueError, TypeError, json.JSONDecodeError):
             pass
         return blank
@@ -154,13 +198,36 @@ class GatewayService:
     def _day():
         return datetime.datetime.now().strftime("%Y-%m-%d")
 
+    def _active_keys(self):
+        return [item for item in self.config["keys"] if item["enabled"]]
+
+    def _find_key(self, key_id):
+        return next((item for item in self.config["keys"] if item["id"] == key_id), None)
+
+    def keys_public(self):
+        with self.lock:
+            result = []
+            for item in self.config["keys"]:
+                day = self.state["key_days"].get(item["id"], {}).get(self._day(), {})
+                result.append({
+                    "id": item["id"], "name": item["name"],
+                    "daily_tokens": item["daily_tokens"], "enabled": item["enabled"],
+                    "created_at": item["created_at"],
+                    "today_tokens": int(day.get("tokens", 0)),
+                    "today_requests": int(day.get("requests", 0)),
+                })
+            return result
+
     def public(self):
         with self.lock:
-            cfg = {k: v for k, v in self.config.items() if k != "key_hash"}
+            active_keys = self._active_keys()
+            cfg = {k: v for k, v in self.config.items() if k not in ("key_hash", "keys")}
             cfg.update({
                 "running": self.httpd is not None,
                 "listen": f"http://127.0.0.1:{self.config['port']}",
-                "key_set": bool(self.config["key_hash"]),
+                "key_set": bool(active_keys),
+                "key_id": active_keys[0]["id"] if active_keys else "",
+                "key_count": len(self.config["keys"]),
                 "active": self.active,
                 "waiting": self.waiting,
             })
@@ -170,8 +237,8 @@ class GatewayService:
         with self.lock:
             if self.httpd is not None:
                 return
-            if not self.config["key_hash"]:
-                raise ValueError("请先生成 API Key")
+            if not self._active_keys():
+                raise ValueError("请先注册 API Key")
             service = self
 
             class Handler(GatewayHandler):
@@ -196,10 +263,10 @@ class GatewayService:
         if not isinstance(data, dict):
             raise ValueError("配置必须是对象")
         allowed = {k: v for k, v in data.items() if k in DEFAULT_CONFIG
-                   and k not in ("key_hash", "key_id")}
+                   and k not in ("key_hash", "key_id", "keys")}
         cfg = validate_config(dict(self.config, **allowed))
-        if cfg["enabled"] and not cfg["key_hash"]:
-            raise ValueError("启用前请先生成 API Key")
+        if cfg["enabled"] and not any(item["enabled"] for item in cfg["keys"]):
+            raise ValueError("启用前请先注册 API Key")
         was_running = self.httpd is not None
         restart = was_running and cfg["port"] != self.config["port"]
         if restart or (was_running and not cfg["enabled"]):
@@ -210,13 +277,49 @@ class GatewayService:
             self.start()
         return self.public()
 
-    def generate_key(self):
-        key = "sk-strata-" + secrets.token_urlsafe(32)
+    def generate_key(self, name=None, daily_tokens=None):
         with self.lock:
-            self.config["key_hash"] = hash_key(key)
-            self.config["key_id"] = hash_key(key)[:10]
+            if daily_tokens is None:
+                daily_tokens = self.config["daily_tokens"]
+            name, daily_tokens = validate_key(name or f"API Key {len(self.config['keys']) + 1}",
+                                              daily_tokens)
+            if any(item["name"].casefold() == name.casefold() for item in self.config["keys"]):
+                raise ValueError("Key 名称已存在")
+            key = "sk-strata-" + secrets.token_urlsafe(32)
+            digest = hash_key(key)
+            key_id = digest[:10]
+            while self._find_key(key_id):
+                key = "sk-strata-" + secrets.token_urlsafe(32)
+                digest = hash_key(key)
+                key_id = digest[:10]
+            self.config["keys"].append({
+                "id": key_id, "name": name, "hash": digest,
+                "daily_tokens": daily_tokens, "enabled": True, "created_at": time.time(),
+            })
             self._save_json(self.config_file, self.config)
-        return key, self.public()
+            return key, self.public()
+
+    def update_key(self, key_id, data):
+        if not isinstance(data, dict):
+            raise ValueError("配置必须是对象")
+        with self.lock:
+            item = self._find_key(key_id)
+            if not item:
+                raise ValueError("Key 不存在")
+            name, daily = validate_key(data.get("name", item["name"]),
+                                       data.get("daily_tokens", item["daily_tokens"]))
+            if any(other["id"] != key_id and other["name"].casefold() == name.casefold()
+                   for other in self.config["keys"]):
+                raise ValueError("Key 名称已存在")
+            enabled = data.get("enabled", item["enabled"])
+            if not isinstance(enabled, bool):
+                raise ValueError("enabled 必须是布尔值")
+            item.update(name=name, daily_tokens=daily, enabled=enabled)
+            self._save_json(self.config_file, self.config)
+            return self.keys_public()
+
+    def revoke_key(self, key_id):
+        return self.update_key(key_id, {"enabled": False})
 
     def _authenticated(self, handler):
         supplied = handler.headers.get("X-API-Key", "")
@@ -226,9 +329,11 @@ class GatewayService:
             supplied = value.strip() if scheme.lower() == "bearer" else ""
         if not supplied:
             raise Reject(401, "需要 Authorization: Bearer <API Key>")
-        if not secrets.compare_digest(hash_key(supplied), self.config["key_hash"]):
-            raise Reject(401, "API Key 无效")
-        return self.config["key_id"]
+        digest = hash_key(supplied)
+        for item in self._active_keys():
+            if secrets.compare_digest(digest, item["hash"]):
+                return item["id"], item["name"]
+        raise Reject(401, "API Key 无效")
 
     def _check_rate(self):
         now = time.monotonic()
@@ -240,12 +345,13 @@ class GatewayService:
                 raise Reject(429, "超过每分钟请求限制", retry)
             self.rate.append(now)
 
-    def _check_quota(self):
-        if self.config["daily_tokens"] == 0:
+    def _check_quota(self, key_id):
+        item = self._find_key(key_id)
+        if not item or item["daily_tokens"] == 0:
             return
-        day = self.state["days"].get(self._day(), {})
-        if int(day.get("tokens", 0)) >= self.config["daily_tokens"]:
-            raise Reject(429, "已达到今日 token 额度")
+        day = self.state["key_days"].get(key_id, {}).get(self._day(), {})
+        if int(day.get("tokens", 0)) >= item["daily_tokens"]:
+            raise Reject(429, f"Key「{item['name']}」已达到今日 token 额度")
 
     def _enter_queue(self):
         with self.lock:
@@ -295,9 +401,18 @@ class GatewayService:
             day["tokens"] = int(day.get("tokens", 0)) + tokens
             self.state["total_requests"] = int(self.state.get("total_requests", 0)) + 1
             self.state["total_tokens"] = int(self.state.get("total_tokens", 0)) + tokens
-            days = self.state["days"]
-            for old in sorted(days)[:-62]:
-                days.pop(old, None)
+            for old in sorted(self.state["days"])[:-62]:
+                self.state["days"].pop(old, None)
+            key_id = row.get("key_id")
+            if key_id and key_id != "—":
+                key_days = self.state["key_days"].setdefault(key_id, {})
+                key_day = key_days.setdefault(day_name, {"requests": 0, "rejected": 0, "tokens": 0})
+                key_day["requests"] = int(key_day.get("requests", 0)) + 1
+                if row["status"] >= 400:
+                    key_day["rejected"] = int(key_day.get("rejected", 0)) + 1
+                key_day["tokens"] = int(key_day.get("tokens", 0)) + tokens
+                for old in sorted(key_days)[:-62]:
+                    key_days.pop(old, None)
             try:
                 self._save_json(self.state_file, self.state)
                 if self.audit_file.exists() and self.audit_file.stat().st_size > 8 * 1024 * 1024:
@@ -307,23 +422,30 @@ class GatewayService:
             except OSError:
                 pass
 
-    def monitor(self):
+    def monitor(self, key_id=None):
         with self.lock:
-            day = dict(self.state["days"].get(self._day(),
-                         {"requests": 0, "rejected": 0, "tokens": 0}))
+            if key_id:
+                day = dict(self.state["key_days"].get(key_id, {}).get(self._day(),
+                             {"requests": 0, "rejected": 0, "tokens": 0}))
+            else:
+                day = dict(self.state["days"].get(self._day(),
+                             {"requests": 0, "rejected": 0, "tokens": 0}))
+            rows = [row for row in self.recent if not key_id or row.get("key_id") == key_id]
             return {
                 "gateway": self.public(),
+                "keys": self.keys_public(),
+                "selected_key": key_id or "",
                 "today": day,
                 "total_requests": self.state.get("total_requests", 0),
                 "total_tokens": self.state.get("total_tokens", 0),
-                "recent": list(reversed(self.recent))[:100],
+                "recent": list(reversed(rows))[:100],
                 "audit": "仅元数据；不保存 API Key、提示词或生成内容",
             }
 
     def clear_audit(self):
         with self.lock:
             self.recent.clear()
-            self.state = {"total_requests": 0, "total_tokens": 0, "days": {}}
+            self.state = {"total_requests": 0, "total_tokens": 0, "days": {}, "key_days": {}}
             self._save_json(self.state_file, self.state)
             for path in (self.audit_file, self.audit_file.with_suffix(".jsonl.1")):
                 try:
@@ -452,6 +574,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
         gateway = self.gateway
         started = time.monotonic()
         key_id = ""
+        key_name = ""
         model = ""
         stream = False
         usage = {}
@@ -468,7 +591,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 raise Reject(405, "请求方法不允许")
             else:
                 raise Reject(404, "端点不存在")
-            key_id = gateway._authenticated(self)
+            key_id, key_name = gateway._authenticated(self)
             gateway._check_rate()
             data = None
             if self.command == "POST":
@@ -496,7 +619,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 stream = bool(data.get("stream"))
             gateway._enter_queue()
             try:
-                gateway._check_quota()
+                gateway._check_quota(key_id)
                 status = self._forward(self.command, path, data, stream, usage)
             finally:
                 gateway._leave_queue()
@@ -534,6 +657,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 "id": uuid.uuid4().hex[:12],
                 "ts": time.time(),
                 "key_id": key_id or "—",
+                "key_name": key_name or "—",
                 "route": path,
                 "method": self.command,
                 "model": model,

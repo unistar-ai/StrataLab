@@ -63,7 +63,7 @@ Chromium 看到的是 1920×1040 DIP、`devicePixelRatio=2`，所以 1400×940 �
 
 代价是这套窗口是一棵独立的 Chromium 进程树（约 150–300 MB 内存）。
 
-## 九个页签
+## 十个页签
 
 | 页签 | 内容 |
 |---|---|
@@ -73,9 +73,10 @@ Chromium 看到的是 1920×1040 DIP、`devicePixelRatio=2`，所以 1400×940 �
 | **对话** | 直接和引擎聊天：思考强度、max_tokens、系统提示；流式输出，每条显示 tok/s、tokens、首字延迟；可中途停止 |
 | **基准** | 单请求测速（提示词 / tokens / 思考强度）+ 最近记录表（tok/s、tokens、首字、缓存） |
 | **历史** | 启动/测速/对话/下载记录表 + decode 速度走势 + CSV 导出 + 清空 |
-| **公网** | 可选 AI Gateway 的运行状态、今日/累计请求与 token、拒绝数、活动/排队请求、最近 100 条审计元数据 |
+| **公网** | 可选 AI Gateway 的运行状态、今日/累计请求与 token、拒绝数、活动/排队请求、按 Key 筛选的审计元数据 |
+| **密钥** | 注册多个命名 API Key、独立每日额度、查看每 Key 今日用量、编辑、吊销与重新启用 |
 | **日志** | 引擎日志文件切换、正则过滤、跟随滚动 |
-| **设置** | 接入信息、公网 Gateway 开关与限额、API Key 生成、档位参数（ctx / kv / vision / parallel）、关闭方式 |
+| **设置** | 接入信息、公网 Gateway 开关与默认限额、档位参数（ctx / kv / vision / parallel）、关闭方式 |
 
 页签可以用地址栏直达：`http://127.0.0.1:8765/#models`、`#term`、`#bench`、`#logs`……
 
@@ -95,8 +96,8 @@ Chromium 看到的是 1920×1040 DIP、`devicePixelRatio=2`，所以 1400×940 �
 
 ### 启用步骤
 
-1. 在设置页点击「生成 / 更换 API Key」。完整 Key **只在生成时返回一次**；本地 `gateway.json` 只保存 SHA-256 和 Key ID，刷新页面后无法取回完整 Key。
-2. 填写公网 Base URL（例如 `https://api.example.com`）、本机端口和保护限额，点击「保存并应用」。
+1. 在「密钥」页填写名称和独立每日额度，点击「注册 API Key」。完整 Key **只在注册时返回一次**；本地 `gateway.json` 只保存 SHA-256 和 Key ID，刷新页面后无法取回完整 Key。
+2. 在设置页填写公网 Base URL（例如 `https://api.example.com`）、本机端口和保护限额，点击「保存并应用」。
 3. 在云服务器配置 HTTPS，并把请求反代到 FRP 暴露的 Gateway 端口。公网只开放 `443`，不要公开 StrataLab `8765`、Strata `8080` 或 FRP 管理端口。
 4. 本机 `frpc.toml` 只转发 Gateway，例如：
 
@@ -116,19 +117,20 @@ Gateway 跟随 StrataLab 进程运行：退出 StrataLab 后，公网 API 也不
 
 ### 内置保护
 
-- `Authorization: Bearer <Key>` 或 `X-API-Key` 鉴权；更换 Key 后旧 Key 立即失效。
+- `Authorization: Bearer <Key>` 或 `X-API-Key` 鉴权；支持多个命名 Key，吊销后立即失效，也可重新启用。
+- 每个 Key 有独立每日 token 额度，`0` 表示不限制；设置页的全局每日额度只作为新 Key 的默认值。
 - 只允许 `GET /v1/models`、`POST /v1/chat/completions`、`POST /v1/messages`，不代理管理 API、终端或任意路径。
 - 聊天请求的 `model` 必须等于当前引擎模型，输出不能超过限额。OpenAI 同时接受 `max_tokens` 和 `max_completion_tokens`，两者都省略时应用 Gateway 上限；Anthropic 按协议要求 `max_tokens` 必填。
-- 默认请求体最大 4 MiB、30 请求/分钟、每日 1,000,000 tokens、单次输出最多 8192 tokens；每日额度设为 `0` 表示不限制。
+- 默认请求体最大 4 MiB、30 请求/分钟、单次输出最多 8192 tokens。
 - 上游固定单并发；默认最多再等待 2 个请求，排队超过 30 秒或队列已满返回 429。
 - 支持 OpenAI 与 Anthropic 的非流式响应和 SSE；流式响应逐行刷新，不在 Gateway 缓冲完整内容。
-- 用量和每日额度持久化到 `gateway-state.json`，重启后不清零。
+- 全局和每个 Key 的用量都持久化到 `gateway-state.json`，重启后不清零；旧单 Key 配置自动迁移为“默认 Key”。
 
 远程客户端的 `max_tokens` 也必须遵守限额；例如 DSH/Pi 若配置为 32768，需要在客户端调低，或在设置页提高 Gateway 上限（最高 32768）。
 
 ### 审计与隐私
 
-「公网」页显示今日/累计请求、token、拒绝数、活动与排队请求，以及最近 100 条审计记录。每条记录只有时间、Key ID、路由、模型、状态码、耗时、输入/输出 token 和错误类别：
+「公网」页显示今日/累计请求、token、拒绝数、活动与排队请求，以及最近 100 条审计记录。可以按 API Key 筛选记录和今日统计；每条记录只有时间、Key 名称与 ID、路由、模型、状态码、耗时、输入/输出 token 和错误类别：
 
 - 不记录完整 API Key，不保存提示词、消息或生成内容。
 - 审计写入 `gateway-audit.jsonl`，超过 8 MiB 时轮转为一个 `.jsonl.1` 备份。
@@ -199,8 +201,8 @@ strata serve: prompt 24 tokens = 17 reused + 7 read in 269 ms (26.0 tok/s),
 |---|---|
 | `profiles.json` | 档位参数（可被设置页改写；缺失时用内置默认） |
 | `history.json` | 运行记录，最多 300 条 |
-| `gateway.json` | 可选 Gateway 配置、Key 哈希与 Key ID；不含完整 API Key |
-| `gateway-state.json` | 每日和累计请求/token 计数，重启后保留 |
+| `gateway.json` | 可选 Gateway 配置、多个命名 Key 的哈希、独立额度与启停状态；不含完整 API Key |
+| `gateway-state.json` | 全局及每个 Key 的每日和累计请求/token 计数，重启后保留 |
 | `gateway-audit.jsonl` | 不含消息内容的审计元数据，超过 8 MiB 轮转 |
 | `logs/launch-<id>-<ts>.log` | 每次 `strata.cmd launch` 的原始输出 |
 | `logs/ui.log` | 控制台自己的生命周期（启动 / 窗口出现 / 关窗退出），排查"为什么没了"看这里 |
@@ -215,8 +217,10 @@ strata serve: prompt 24 tokens = 17 reused + 7 read in 269 ms (26.0 tok/s),
 |---|---|---|
 | GET | `/api/status` | health、VRAM、RAM、profiles、任务、stale 标记、引擎指标 |
 | GET | `/api/stats` | 服务计数（`run` 本次运行 / `all` 该日志全部）+ 专家缓存命中 + 上一条请求 |
-| GET/POST | `/api/gateway` | 读取监控 / 更新可选 Gateway 配置 |
-| POST | `/api/gateway/key` | 生成并更换 API Key；完整 Key 仅本次返回 |
+| GET/POST | `/api/gateway` | 读取监控 / 更新可选 Gateway 配置；GET 支持 `?key_id=` 筛选 |
+| POST | `/api/gateway/key` | 注册命名 API Key 和独立额度；完整 Key 仅本次返回 |
+| POST | `/api/gateway/key/update` | 修改名称、独立额度，或启用/吊销 Key |
+| POST | `/api/gateway/key/revoke` | 吊销 Key，保留历史审计 |
 | POST | `/api/gateway/clear` | 清空 Gateway 审计和用量 |
 | GET | `/api/meta` | `/props` 摘要：构建版本、模型路径、槽位、采样默认值（不返回 10 KB 的 chat template） |
 | GET | `/api/live` | 当前请求状态、进度、速度、耗时及最近 60 个 Prefill/Decode 速度采样点 |

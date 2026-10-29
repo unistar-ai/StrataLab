@@ -301,6 +301,7 @@
     <button data-tab="bench">基准</button>
     <button data-tab="history">历史</button>
     <button data-tab="gateway">公网</button>
+    <button data-tab="keys">密钥</button>
     <button data-tab="logs">日志</button>
     <button data-tab="settings">设置</button>
   </nav>
@@ -571,7 +572,7 @@
     <div class="kpi3" id="gateway-kpis"></div>
     <div class="cols">
       <div class="card">
-        <h2>公网接入 <span class="hint">在设置页生成 API Key</span></h2>
+        <h2>公网接入 <span class="hint">在密钥页注册 API Key</span></h2>
         <div class="rows" id="gateway-endpoints"></div>
       </div>
       <div class="card">
@@ -583,9 +584,36 @@
     <div class="card">
       <h2>审计日志 <span class="hint">最近 100 条 · 仅元数据</span></h2>
       <div class="btnrow" style="margin-bottom:8px">
+        <select id="audit-key" onchange="setAuditKey(this.value)"><option value="">全部 API Key</option></select>
         <button class="mini danger" onclick="clearGatewayAudit()">清空审计与用量</button>
       </div>
       <div style="overflow:auto"><table id="gateway-audit-table"></table></div>
+    </div>
+  </section>
+
+  <!-- ================================================================ API Keys -->
+  <section class="tab" id="tab-keys">
+    <div class="sec">
+      <div>
+        <div class="eyebrow">密钥</div>
+        <h1>API Key 管理</h1>
+      </div>
+      <div class="tools"><button class="mini" onclick="loadKeys()">刷新</button></div>
+    </div>
+    <div class="banner info show"><span>每个 Key 独立计算每日 token 额度，0 为不限。吊销后立即失效，但历史审计保留。完整 Key 只在注册时显示一次。</span></div>
+    <div class="card">
+      <h2>注册新 Key</h2>
+      <div class="btnrow">
+        <label class="inline">名称 <input id="key-name" maxlength="40" placeholder="例如：手机 Kimi" style="width:220px" /></label>
+        <label class="inline">每日 tokens <input id="key-daily" type="number" min="0" value="0" style="width:130px" /></label>
+        <button class="primary" onclick="createKey()">注册 API Key</button>
+      </div>
+      <div class="mute" style="margin-top:8px">名称不可重复；每日额度填 0 表示不限制。</div>
+      <div id="key-created" style="margin-top:10px"></div>
+    </div>
+    <div class="card">
+      <h2>已有 Key <span class="hint">修改名称或额度后点保存</span></h2>
+      <div style="overflow:auto"><table id="key-table"></table></div>
     </div>
   </section>
 
@@ -637,19 +665,17 @@
               <label class="inline">请求/分钟 <input id="gw-rate" type="number" min="1" max="1000" style="width:72px" /></label>
             </div>
             <div class="btnrow">
-              <label class="inline">每日 tokens（0 不限） <input id="gw-daily" type="number" min="0" style="width:120px" /></label>
+              <label class="inline">新 Key 默认每日 <input id="gw-daily" type="number" min="0" style="width:120px" /></label>
               <label class="inline">max_tokens <input id="gw-max" type="number" min="1" max="32768" style="width:88px" /></label>
               <label class="inline">等待队列 <input id="gw-queue" type="number" min="0" max="20" style="width:58px" /></label>
             </div>
           </div>
           <div class="btnrow" style="margin-top:12px">
             <button class="primary" onclick="saveGateway()">保存并应用</button>
-            <button class="mini" onclick="generateGatewayKey()">生成 / 更换 API Key</button>
-            <span class="mute" id="gw-key-state"></span>
+            <button class="mini" onclick="openTab('keys')">管理 API Key</button>
           </div>
-          <div id="gw-key-result" style="margin-top:10px"></div>
           <div class="mute" style="margin-top:10px;line-height:1.8">
-            完整 Key 只显示一次，服务端仅保存 SHA-256。更换后旧 Key 立即失效。<br />
+            完整 Key 只显示一次，服务端仅保存 SHA-256；命名、独立额度和吊销在“密钥”页管理。<br />
             只开放 /v1/models、/v1/chat/completions、/v1/messages；模型名必须与当前引擎一致。OpenAI 支持 max_tokens / max_completion_tokens。
           </div>
         </div>
@@ -774,6 +800,7 @@ function openTab(name){
   if (name === "term") termEnter();
   if (name === "history") loadHistory();
   if (name === "gateway") loadGateway();
+  if (name === "keys") loadKeys();
   if (name === "bench") loadBench();
   if (name === "logs") loadLogs();
   if (name === "settings") loadSettings();
@@ -1499,11 +1526,12 @@ function renderGateway(data){
   const state = $("gateway-state");
   state.innerHTML = '<i class="dot ' + (g.running ? "ok" : "err") + '"></i><span>'
     + (g.running ? "运行中" : (g.enabled ? "启动失败" : "未启用")) + "</span>";
+  const selected = (data.keys || []).find(k => k.id === data.selected_key);
   const kpi = (label, value, sub) => '<div class="kpi"><div class="k">' + label
     + '</div><div class="v">' + value + '</div><div class="s">' + sub + "</div></div>";
   $("gateway-kpis").innerHTML =
-    kpi("今日请求", compact(today.requests), "累计 " + compact(data.total_requests)) +
-    kpi("今日 tokens", compact(today.tokens), "累计 " + compact(data.total_tokens)) +
+    kpi("今日请求", compact(today.requests), selected ? "按 " + esc(selected.name) + " 筛选" : "累计 " + compact(data.total_requests)) +
+    kpi("今日 tokens", compact(today.tokens), selected ? "当前 Key 独立用量" : "累计 " + compact(data.total_tokens)) +
     kpi("今日拒绝", compact(today.rejected), "鉴权 / 限额 / 上游错误") +
     kpi("当前请求", nf(g.active), "排队 " + nf(g.waiting) + " · 上限 " + g.queue_size);
   const base = g.public_url || "";
@@ -1512,34 +1540,45 @@ function renderGateway(data){
     ["OpenAI", v1],
     ["Anthropic", base || "（未配置公网 Base URL）"],
     ["本机监听", g.listen],
-    ["Key ID", g.key_set ? g.key_id : "（未生成）"]
+    ["API Keys", g.key_count + " 个已注册"]
   ];
   $("gateway-endpoints").innerHTML = rows.map(r => '<div class="row"><span class="label">'
     + r[0] + '</span><code>' + esc(r[1]) + "</code></div>").join("");
   $("gateway-limits").innerHTML =
     "<b>鉴权</b><span>" + (g.key_set ? "Bearer / X-API-Key" : "未配置") + "</span>" +
     "<b>速率</b><span>" + g.rate_per_min + " 请求/分钟</span>" +
-    "<b>每日额度</b><span>" + (g.daily_tokens === 0 ? "不限" : compact(g.daily_tokens) + " tokens") + "</span>" +
+    "<b>新 Key 默认</b><span>" + (g.daily_tokens === 0 ? "每日不限" : compact(g.daily_tokens) + " tokens/日") + "</span>" +
     "<b>单次输出</b><span>最多 " + compact(g.max_tokens) + " tokens</span>" +
     "<b>请求体</b><span>最多 " + fmtSize(g.max_body_bytes) + "</span>" +
     "<b>排队超时</b><span>" + g.queue_timeout_s + " 秒</span>";
   $("gateway-frpc").textContent = '# frpc.toml；云侧仍应限制端口并配置 HTTPS\n'
     + '[[proxies]]\nname = "strata-gateway"\ntype = "tcp"\n'
     + 'localIP = "127.0.0.1"\nlocalPort = ' + g.port + '\nremotePort = ' + g.port;
+  $("audit-key").innerHTML = '<option value="">全部 API Key</option>' + (data.keys || []).map(k =>
+    '<option value="' + k.id + '" ' + (data.selected_key === k.id ? "selected" : "") + '>'
+    + esc(k.name) + (k.enabled ? "" : "（已吊销）") + "</option>").join("");
+  const names = Object.fromEntries((data.keys || []).map(k => [k.id, k.name]));
   const items = data.recent || [];
-  $("gateway-audit-table").innerHTML = '<tr><th>时间</th><th>Key ID</th><th>路由</th><th>状态</th><th>耗时</th><th>tokens</th></tr>'
+  $("gateway-audit-table").innerHTML = '<tr><th>时间</th><th>API Key</th><th>路由</th><th>状态</th><th>耗时</th><th>tokens</th></tr>'
     + (items.length ? items.map(it => {
       const ok = it.status >= 200 && it.status < 400;
+      const keyName = it.key_name && it.key_name !== "—" ? it.key_name : (names[it.key_id] || it.key_id);
       return '<tr><td class="mono">' + new Date(it.ts * 1000).toLocaleString("zh-CN", { hour12:false })
-        + '</td><td class="mono">' + esc(it.key_id) + '</td><td class="mono" title="' + esc(it.model || "")
-        + '">' + esc(it.route) + (it.stream ? " · SSE" : "") + '</td><td class="' + (ok ? "okc" : "errc")
-        + '" title="' + esc(it.error || "") + '">' + it.status + '</td><td>' + nf(it.ms)
-        + ' ms</td><td>' + compact(it.total_tokens) + '</td></tr>';
+        + '</td><td>' + esc(keyName) + '<div class="mute mono">' + esc(it.key_id) + '</div></td>'
+        + '<td class="mono" title="' + esc(it.model || "") + '">' + esc(it.route) + (it.stream ? " · SSE" : "")
+        + '</td><td class="' + (ok ? "okc" : "errc") + '" title="' + esc(it.error || "") + '">' + it.status
+        + '</td><td>' + nf(it.ms) + ' ms</td><td>' + compact(it.total_tokens) + '</td></tr>';
     }).join("") : '<tr><td colspan="6" class="note">还没有请求</td></tr>');
 }
 async function loadGateway(){
-  try { renderGateway(await api("/api/gateway")); }
-  catch { $("gateway-state").innerHTML = '<i class="dot err"></i><span>读取失败</span>'; }
+  try {
+    const selected = S.auditKey || "";
+    renderGateway(await api("/api/gateway" + (selected ? "?key_id=" + encodeURIComponent(selected) : "")));
+  } catch { $("gateway-state").innerHTML = '<i class="dot err"></i><span>读取失败</span>'; }
+}
+function setAuditKey(id){
+  S.auditKey = id;
+  loadGateway();
 }
 function fillGatewaySettings(g){
   $("gw-enabled").checked = !!g.enabled;
@@ -1549,7 +1588,6 @@ function fillGatewaySettings(g){
   $("gw-daily").value = g.daily_tokens;
   $("gw-max").value = g.max_tokens;
   $("gw-queue").value = g.queue_size;
-  $("gw-key-state").textContent = g.key_set ? "Key ID " + g.key_id : "尚未生成 Key";
 }
 async function saveGateway(){
   try {
@@ -1566,17 +1604,56 @@ async function saveGateway(){
     toast(r.gateway.running ? "Gateway 已启动" : "配置已保存，Gateway 已关闭");
   } catch (e){ toast(e.message, true); }
 }
-async function generateGatewayKey(){
-  const current = S.gateway && S.gateway.gateway;
-  if (current && current.key_set && !confirm("更换 API Key？旧 Key 会立即失效。")) return;
+async function loadKeys(){
   try {
-    const r = await api("/api/gateway/key", { method:"POST", body:"{}" });
-    if (S.gateway) S.gateway.gateway = r.gateway;
-    $("gw-key-state").textContent = "Key ID " + r.gateway.key_id;
-    $("gw-key-result").innerHTML = '<div class="row"><span class="label">完整 Key</span><code>'
-      + esc(r.key) + '</code><button class="copy" data-copy="' + esc(r.key)
+    const data = await api("/api/gateway");
+    S.keysData = data;
+    S.gateway = data;
+    renderKeyTable(data.keys || []);
+  } catch (e){ toast(e.message, true); }
+}
+function renderKeyTable(keys){
+  $("key-table").innerHTML = '<tr><th>名称</th><th>Key ID</th><th>今日 tokens</th><th>每日额度</th><th>状态</th><th>操作</th></tr>'
+    + (keys.length ? keys.map(k => '<tr><td><input class="key-edit-name" data-id="' + k.id + '" maxlength="40" value="'
+      + esc(k.name) + '" style="width:170px" /></td><td class="mono">' + k.id + '</td><td>' + compact(k.today_tokens)
+      + '<div class="mute">' + k.today_requests + ' 次请求</div></td><td><input class="key-edit-daily" data-id="'
+      + k.id + '" type="number" min="0" value="' + k.daily_tokens + '" style="width:125px" /></td><td class="'
+      + (k.enabled ? "okc" : "errc") + '">' + (k.enabled ? "有效" : "已吊销") + '</td><td><div class="btnrow">'
+      + '<button class="mini" onclick="saveKey(\'' + k.id + '\')">保存</button>'
+      + '<button class="mini ' + (k.enabled ? "danger" : "") + '" onclick="toggleKey(\'' + k.id + '\','
+      + (k.enabled ? "false" : "true") + ')">' + (k.enabled ? "吊销" : "启用") + '</button>'
+      + '</div></td></tr>').join("") : '<tr><td colspan="6" class="note">还没有 API Key</td></tr>');
+}
+async function createKey(){
+  const name = $("key-name").value.trim();
+  if (!name){ toast("请先填写 Key 名称", true); return; }
+  try {
+    const r = await api("/api/gateway/key", { method:"POST", body:JSON.stringify({
+      name:name, daily_tokens:parseInt($("key-daily").value || "0", 10)
+    }) });
+    $("key-created").innerHTML = '<div class="row"><span class="label">完整 Key</span><code>' + esc(r.key)
+      + '</code><button class="copy" data-copy="' + esc(r.key)
       + '" onclick="copyText(this.dataset.copy, this)">复制</button></div>'
       + '<div class="mute warnc">现在复制并妥善保存；刷新后无法再次查看。</div>';
+    $("key-name").value = "";
+    loadKeys();
+  } catch (e){ toast(e.message, true); }
+}
+async function saveKey(id){
+  try {
+    await api("/api/gateway/key/update", { method:"POST", body:JSON.stringify({
+      id:id,
+      name:document.querySelector('.key-edit-name[data-id="' + id + '"]').value.trim(),
+      daily_tokens:parseInt(document.querySelector('.key-edit-daily[data-id="' + id + '"]').value, 10)
+    }) });
+    toast("Key 已更新"); loadKeys();
+  } catch (e){ toast(e.message, true); }
+}
+async function toggleKey(id, enabled){
+  if (!enabled && !confirm("吊销这个 API Key？使用它的客户端会立即返回 401，历史审计保留。")) return;
+  try {
+    await api("/api/gateway/key/update", { method:"POST", body:JSON.stringify({ id:id, enabled:enabled }) });
+    toast(enabled ? "Key 已启用" : "Key 已吊销"); loadKeys();
   } catch (e){ toast(e.message, true); }
 }
 async function clearGatewayAudit(){

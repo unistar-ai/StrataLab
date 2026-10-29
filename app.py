@@ -8,7 +8,9 @@ Zero dependency (stdlib only), binds 127.0.0.1. Backend for ui.html.
                              (this engine run / every run in that log)
   GET  /api/gateway          public API gateway config, counters and audit metadata
   POST /api/gateway          update optional gateway configuration
-  POST /api/gateway/key      rotate the API key (returned once, stored hashed)
+  POST /api/gateway/key      register a named API key (returned once, stored hashed)
+  POST /api/gateway/key/update  rename, change quota, enable or disable a key
+  POST /api/gateway/key/revoke  revoke a key without deleting its audit history
   POST /api/gateway/clear    clear gateway audit and token counters
   GET  /api/meta             /props summary: build, model path, sampling defaults
   GET  /api/live             current request phase, progress and speed
@@ -1515,7 +1517,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(stats_payload())
 
         if path == "/api/gateway":
-            return self.reply(GATEWAY.monitor())
+            return self.reply(GATEWAY.monitor(params.get("key_id") or None))
 
         if path == "/api/meta":
             return self.reply(engine_meta())
@@ -1605,10 +1607,24 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/gateway/key":
             try:
-                key, public = GATEWAY.generate_key()
+                key, public = GATEWAY.generate_key(data.get("name"), data.get("daily_tokens"))
                 return self.reply({"ok": True, "key": key, "gateway": public})
-            except OSError as exc:
-                return self.reply({"ok": False, "error": str(exc)}, 500)
+            except (ValueError, OSError) as exc:
+                return self.reply({"ok": False, "error": str(exc)}, 400)
+
+        if path == "/api/gateway/key/update":
+            try:
+                keys = GATEWAY.update_key(data.get("id") or "", data)
+                return self.reply({"ok": True, "keys": keys})
+            except (ValueError, OSError) as exc:
+                return self.reply({"ok": False, "error": str(exc)}, 400)
+
+        if path == "/api/gateway/key/revoke":
+            try:
+                keys = GATEWAY.revoke_key(data.get("id") or "")
+                return self.reply({"ok": True, "keys": keys})
+            except (ValueError, OSError) as exc:
+                return self.reply({"ok": False, "error": str(exc)}, 400)
 
         if path == "/api/gateway/clear":
             try:
