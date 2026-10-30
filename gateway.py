@@ -163,10 +163,13 @@ class GatewayServer(ThreadingHTTPServer):
 
 
 class GatewayService:
-    def __init__(self, app_dir, upstream="127.0.0.1", upstream_port=8080):
+    def __init__(self, app_dir, upstream="127.0.0.1", upstream_port=8080,
+                 models=None, on_switch=None):
         self.app_dir = Path(app_dir)
         self.upstream = upstream
         self.upstream_port = upstream_port
+        self.models = models
+        self.on_switch = on_switch
         self.config_file = self.app_dir / "gateway.json"
         self.state_file = self.app_dir / "gateway-state.json"
         self.audit_file = self.app_dir / "gateway-audit.jsonl"
@@ -438,6 +441,23 @@ class GatewayService:
         finally:
             conn.close()
 
+    def ensure_model(self, model):
+        if self.on_switch is None:
+            active_model = self._engine_model()
+            if model != active_model:
+                raise Reject(400, f"model 必须是当前引擎模型：{active_model}")
+            return active_model
+        if self.models is not None:
+            available = {item.get("id") for item in self.models().get("data", [])}
+            if model not in available:
+                raise Reject(400, f"本机没有可用模型：{model}")
+        try:
+            return self.on_switch(model)
+        except LookupError:
+            raise Reject(400, f"本机没有可用模型：{model}")
+        except Exception as exc:
+            raise Reject(503, f"模型加载失败：{str(exc)[:300]}")
+
     def _record(self, row):
         with self.lock:
             self.recent.append(row)
@@ -628,6 +648,19 @@ class GatewayHandler(BaseHTTPRequestHandler):
         finally:
             conn.close()
 
+    def _send_models(self, payload):
+        raw = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(raw)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Connection", "close")
+        self.end_headers()
+        self.response_started = True
+        self.close_connection = True
+        self.wfile.write(raw)
+        return 200
+
     def _handle(self):
         gateway = self.gateway
         started = time.monotonic()
@@ -651,15 +684,19 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 raise Reject(404, "端点不存在")
             key_id, key_name = gateway._authenticated(self)
             gateway._check_rate()
+            if self.command == "GET" and gateway.models is not None:
+                gateway._check_quota(key_id)
+                gateway._enter_queue()
+                try:
+                    return self._send_models(gateway.models())
+                finally:
+                    gateway._leave_queue()
             data = None
             if self.command == "POST":
                 data = self._read_json()
                 model = data.get("model") or ""
                 if not isinstance(model, str) or not model or len(model) > 200:
                     raise Reject(400, "model 必填")
-                active_model = gateway._engine_model()
-                if model != active_model:
-                    raise Reject(400, f"model 必须是当前引擎模型：{active_model}")
                 if path == "/v1/chat/completions":
                     if "max_completion_tokens" in data:
                         alternate = data["max_completion_tokens"]
@@ -678,6 +715,8 @@ class GatewayHandler(BaseHTTPRequestHandler):
             gateway._enter_queue()
             try:
                 gateway._check_quota(key_id)
+                if self.command == "POST":
+                    gateway.ensure_model(model)
                 status = self._forward(self.command, path, data, stream, usage)
             finally:
                 gateway._leave_queue()

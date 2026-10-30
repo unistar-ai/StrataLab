@@ -123,7 +123,7 @@ Gateway 跟随 StrataLab 进程运行：退出 StrataLab 后，公网 API 也不
 - 每个 Key 有独立每日额度。界面可选择“无限”、M tokens、人民币或美元；API 中 token 额度的 `null` 表示不限，数字 `0` 表示真实零额度。金额使用 `daily_money: {currency: CNY|USD, amount}`，`null` 表示不限，任一额度达到即拒绝请求。旧配置中代表不限的 `0` 会自动迁移为 `null`；所有额度均在“密钥”页按 Key 独立管理。
 - 金额按 DeepSeek Flash 官方峰值价计算：美元输入缓存命中 $0.006/M、未命中 $0.3/M、输出 $1.2/M；人民币分别为 0.04 元/M、2 元/M、8 元/M。两种货币分别按官方报价计算，不做汇率换算。
 - 只允许 `GET /v1/models`、`POST /v1/chat/completions`、`POST /v1/messages`，不代理管理 API、终端或任意路径。
-- 聊天请求的 `model` 必须等于当前引擎模型，输出不能超过限额。OpenAI 同时接受 `max_tokens` 和 `max_completion_tokens`，两者都省略时应用 Gateway 上限；Anthropic 按协议要求 `max_tokens` 必填。
+- `GET /v1/models` 列出本机分片完整的全部模型及加载状态，不要求引擎已启动。聊天请求的 `model` 可以是其中任意一个：Gateway 会先卸载之前的模型并加载目标模型，就绪后再转发；切换在单上游队列中串行执行，加载失败返回 503，未知模型返回 400。输出不能超过限额。OpenAI 同时接受 `max_tokens` 和 `max_completion_tokens`，两者都省略时应用 Gateway 上限；Anthropic 按协议要求 `max_tokens` 必填。
 - 默认请求体最大 4 MiB、30 请求/分钟、单次输出最多 8192 tokens。
 - 上游固定单并发；默认最多再等待 2 个请求，排队超过 30 秒或队列已满返回 429。
 - 支持 OpenAI 与 Anthropic 的非流式响应和 SSE；流式响应逐行刷新，不在 Gateway 缓冲完整内容。

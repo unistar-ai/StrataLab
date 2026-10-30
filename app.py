@@ -1286,6 +1286,60 @@ def start_engine(pid, force=False):
     return job
 
 
+# ---------------------------------------------------------------- model catalog and switching
+
+MODEL_SWITCH_LOCK = threading.Lock()
+
+
+def model_catalog():
+    current = health()
+    current_id = (current or {}).get("model", "") if (current or {}).get("loaded") else ""
+    items = []
+    for pid, profile in PROFILES.items():
+        if not ready(pid)[0]:
+            continue
+        shard = Path(profile["path"]) / profile["shard"][0]
+        try:
+            created = int(shard.stat().st_mtime)
+        except OSError:
+            created = 0
+        items.append({
+            "id": profile["served_id"], "object": "model", "created": created,
+            "owned_by": "local",
+            "status": {"value": "loaded" if current_id == profile["served_id"] else "available"},
+            "meta": {"n_ctx": int(profile.get("ctx", 262144))},
+            "architecture": {"input_modalities": ["text", "image"], "output_modalities": ["text"]},
+        })
+    return {"object": "list", "data": items}
+
+
+def ensure_engine_model(served_id):
+    with MODEL_SWITCH_LOCK:
+        current = health()
+        if current and current.get("loaded") and current.get("model") == served_id:
+            return served_id
+        pid = next((key for key, profile in PROFILES.items()
+                    if profile.get("served_id") == served_id), None)
+        if pid is None:
+            raise LookupError(served_id)
+        if not ready(pid)[0]:
+            raise RuntimeError("模型文件未就绪")
+        job = start_engine(pid, force=True)
+        deadline = time.time() + 330
+        while time.time() < deadline:
+            current = health()
+            if current and current.get("loaded") and current.get("model") == served_id:
+                return served_id
+            if job["state"] in ("failed", "cancelled"):
+                raise RuntimeError(job.get("detail") or "模型加载失败")
+            time.sleep(0.5)
+        raise TimeoutError("模型加载超时")
+
+
+GATEWAY.models = model_catalog
+GATEWAY.on_switch = ensure_engine_model
+
+
 # ---------------------------------------------------------------- chat / bench
 
 def stream_chat(job, messages, max_tokens=1024, effort="medium"):
