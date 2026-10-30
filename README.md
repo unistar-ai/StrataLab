@@ -68,7 +68,7 @@ Chromium 看到的是 1920×1040 DIP、`devicePixelRatio=2`，所以 1400×940 �
 | 页签 | 内容 |
 |---|---|
 | **概览** | 服务统计（已处理 / 复用 token、缓存效率，可切「本次运行 / 全部」）、平均速度（预填 / 生成 / MTP 投机命中）、API 端点（一键复制）、客户端接入清单、引擎信息卡（模型 / 上下文 / 槽位 / 采样 / 显存 / 内存）、5 分钟趋势、最近任务 |
-| **模型** | 档位卡片（就绪度按真实字节）、磁盘扫描（`models` 下所有 gguf 目录、大小、是否残留分片）、补分片（hf-mirror 续传，写 `*.labpart`，字节校验通过才改名） |
+| **模型** | 模型卡片（就绪度按真实字节）、磁盘扫描（`models` 下所有 gguf 目录、大小、是否残留分片）、补分片（hf-mirror 续传，写 `*.labpart`，字节校验通过才改名） |
 | **终端** | 内置真终端（Windows ConPTY + xterm.js）：cmd / PowerShell / pi / Python 四个入口，直接在里面敲命令、跑 pi 的 TUI |
 | **对话** | 直接和引擎聊天：思考强度、max_tokens、系统提示；流式输出，每条显示 tok/s、tokens、首字延迟；可中途停止 |
 | **基准** | 单请求测速（提示词 / tokens / 思考强度）+ 最近记录表（tok/s、tokens、首字、缓存） |
@@ -76,7 +76,7 @@ Chromium 看到的是 1920×1040 DIP、`devicePixelRatio=2`，所以 1400×940 �
 | **公网** | 可选 AI Gateway 的运行状态、今日/累计请求与 token、拒绝数、活动/排队请求、按 Key 筛选的审计元数据 |
 | **密钥** | 注册多个命名 API Key、独立每日额度、查看每 Key 今日用量、编辑与永久删除 |
 | **日志** | 引擎日志文件切换、正则过滤、跟随滚动 |
-| **设置** | 接入信息、公网 Gateway 开关与默认限额、档位参数（ctx / kv / vision / parallel）、关闭方式 |
+| **设置** | 接入信息、公网 Gateway 开关与默认限额、模型参数（ctx / kv / vision / parallel）、关闭方式 |
 
 页签可以用地址栏直达：`http://127.0.0.1:8765/#models`、`#term`、`#bench`、`#logs`……
 
@@ -202,7 +202,7 @@ strata serve: prompt 24 tokens = 17 reused + 7 read in 269 ms (26.0 tok/s),
 
 | 文件 | 作用 |
 |---|---|
-| `profiles.json` | 档位参数（可被设置页改写；缺失时用内置默认） |
+| `profiles.json` | 模型参数（可被设置页改写；缺失时用内置默认） |
 | `history.json` | 运行记录，最多 300 条 |
 | `frp.json` | 是否让 FRPC 随 StrataLab 自动启动，默认关闭 |
 | `gateway.json` | 可选 Gateway 配置、多个命名 Key 的哈希、独立额度与启停状态；不含完整 API Key |
@@ -234,7 +234,7 @@ strata serve: prompt 24 tokens = 17 reused + 7 read in 269 ms (26.0 tok/s),
 | GET | `/api/live` | 当前请求状态、进度、速度、耗时及最近 60 个 Prefill/Decode 速度采样点 |
 | GET | `/api/metrics` | 采样序列（每 2 秒，最多 300 点）+ 实时解析的引擎统计 |
 | GET | `/api/scan` | Strata 根目录下 `models` 中的模型目录 |
-| GET/POST | `/api/profiles` | 读/写档位参数 |
+| GET/POST | `/api/profiles` | 读/写模型参数 |
 | GET | `/api/conn` | 端点 + 客户端接入清单（命令 + 配置是否已存在） |
 | GET | `/api/logfiles` | 可用引擎日志列表 |
 | GET | `/api/logs?file=&grep=` | 日志尾部（可过滤） |
@@ -246,7 +246,7 @@ strata serve: prompt 24 tokens = 17 reused + 7 read in 269 ms (26.0 tok/s),
 | POST | `/api/term/input` | `{text}` 写进 pty（键盘输入） |
 | POST | `/api/term/resize` | `{cols, rows}` 调整 pty 大小 |
 | POST | `/api/term/stop` | 结束会话 |
-| POST | `/api/start` | `{id, force?}` 启动档位 |
+| POST | `/api/start` | `{id, force?}` 启动模型 |
 | POST | `/api/stop` | 停止引擎 |
 | POST | `/api/bench` | `{prompt?, max_tokens?, effort?}` 测速 |
 | POST | `/api/chat` | `{prompt, max_tokens?, effort?, system?}` 流式对话 |
@@ -274,7 +274,7 @@ strata serve: prompt 24 tokens = 17 reused + 7 read in 269 ms (26.0 tok/s),
 ## 默认参数
 
 `ctx=262144`（256K，本机实测可用）、`kv=k8v4`、`vision=cpu`、`parallel=1`。
-每个档位独立配置，设置页改完保存即写入 `profiles.json`，下次启动生效。
+每个模型独立配置，设置页改完保存即写入 `profiles.json`，下次启动生效。
 
 ## 生命周期
 
@@ -299,7 +299,7 @@ strata serve: prompt 24 tokens = 17 reused + 7 read in 269 ms (26.0 tok/s),
   有控制台（哪怕隐藏）则继承、不开窗。实测同一脚本：`python.exe` 0 个新 conhost，`pythonw.exe` 3 个。
 - **引擎刚启动后的第一次请求很慢**（实测 5.1 tok/s、首字 4.6 秒），第二、三次回到 26 → 70 tok/s。
   这是专家缓存冷启动，不是配置问题。
-- 统计只读**当前档位对应的那份日志**（`launch\<model>-<ctx>k.engine.log`），换档位后「全部」也跟着换。
+- 统计只读**当前模型对应的那份日志**（`launch\<model>-<ctx>k.engine.log`），换模型后「全部」也跟着换。
 
 ## 横幅的两种状态
 

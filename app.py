@@ -92,7 +92,7 @@ HF_REPO = "ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF"
 
 DEFAULT_PROFILES = {
     "fast": {
-        "title": "Fast", "model_label": "IQ3_XXS · 3.2 bit",
+        "title": "IQ3_XXS", "model_label": "IQ3_XXS · 3.2 bit",
         "family": "qwen", "model": "iq3_xxs", "path": str(MODELS_ROOT / "IQ3_XXS"),
         "served_id": "qwen3.8-flash-next-iq3_xxs",
         "ctx": 262144, "kv": "k8v4", "vision": "cpu", "parallel": 1, "extra": [],
@@ -102,7 +102,7 @@ DEFAULT_PROFILES = {
         "repo_dir": "IQ3_XXS",
     },
     "balanced": {
-        "title": "Balanced", "model_label": "IQ3_S · 3.5 bit",
+        "title": "IQ3_S", "model_label": "IQ3_S · 3.5 bit",
         "family": "qwen", "model": "iq3_s", "path": str(MODELS_ROOT / "IQ3_S"),
         "served_id": "qwen3.8-flash-next-iq3_s",
         "ctx": 262144, "kv": "k8v4", "vision": "cpu", "parallel": 1, "extra": [],
@@ -112,7 +112,7 @@ DEFAULT_PROFILES = {
         "repo_dir": "IQ3_S",
     },
     "quality": {
-        "title": "Quality", "model_label": "UD-Q4_K_XL · 4 bit",
+        "title": "UD-Q4_K_XL", "model_label": "UD-Q4_K_XL · 4 bit",
         "family": "unsloth", "model": "ud-q4_k_xl", "path": str(MODELS_ROOT / "UD-Q4_K_XL"),
         "served_id": "qwen3.8-flash-next-unsloth-ud-q4_k_xl",
         "ctx": 262144, "kv": "k8v4", "vision": "cpu", "parallel": 1,
@@ -121,6 +121,16 @@ DEFAULT_PROFILES = {
         "speed": "实测 decode 25–27 tok/s · 预填 ~724 tok/s",
         "shard": ["Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf", 10946624],
         "repo_dir": "UD-Q4_K_XL",
+    },
+    "iq4xs": {
+        "title": "UD-IQ4_XS", "model_label": "UD-IQ4_XS · 4 bit",
+        "family": "unsloth", "model": "ud-iq4_xs", "path": str(MODELS_ROOT / "UD-IQ4_XS"),
+        "served_id": "qwen3.8-flash-next-unsloth-ud-iq4_xs",
+        "ctx": 262144, "kv": "k8v4", "vision": "cpu", "parallel": 1, "extra": [],
+        "desc": "4-bit 动态量化。89 GiB 权重，部分专家按需从 SSD 读取，速度约为 IQ3_S 的一半。",
+        "speed": "实测 decode 33–38 tok/s · 预填 ~945 tok/s",
+        "shard": ["Qwen3.8-Flash-Next-UD-IQ4_XS-00001-of-00003.gguf", 10946624],
+        "repo_dir": "UD-IQ4_XS",
     },
 }
 
@@ -151,9 +161,9 @@ def load_profiles():
         try:
             data = json.loads(PROFILES_FILE.read_text(encoding="utf-8"))
             if isinstance(data, dict) and data:
-                merged = {}
+                merged = json.loads(json.dumps(DEFAULT_PROFILES))
                 for pid, p in data.items():
-                    base = json.loads(json.dumps(DEFAULT_PROFILES.get(pid, {})))
+                    base = merged.get(pid, {})
                     base.update(p)
                     merged[pid] = base
                 return merged
@@ -1785,7 +1795,7 @@ class Handler(BaseHTTPRequestHandler):
             merged = load_profiles()
             for pid, p in incoming.items():
                 if pid not in merged:
-                    return self.reply({"ok": False, "error": f"未知档位 {pid}"}, 400)
+                    return self.reply({"ok": False, "error": f"未知模型 {pid}"}, 400)
                 if not isinstance(p, dict):
                     return self.reply({"ok": False, "error": f"{pid} 必须是对象"}, 400)
                 for key, value in p.items():

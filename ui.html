@@ -399,12 +399,12 @@
     <div class="sec">
       <div>
         <div class="eyebrow">模型</div>
-        <h1>档位与磁盘</h1>
+        <h1>模型与磁盘</h1>
       </div>
       <div class="tools"><span class="mute" id="scan-tag">—</span></div>
     </div>
     <div class="card">
-      <h2>档位 <span class="hint">启动会占满显存，40–90 秒</span></h2>
+      <h2>模型 <span class="hint">启动会占满显存，40–90 秒</span></h2>
       <div class="profiles" id="model-profiles"></div>
     </div>
     <div class="cols">
@@ -659,7 +659,7 @@
     <div class="sec">
       <div>
         <div class="eyebrow">设置</div>
-        <h1>接入与档位</h1>
+        <h1>接入与模型</h1>
       </div>
     </div>
     <div class="cols">
@@ -669,7 +669,7 @@
           <div class="kv" id="conn"></div>
         </div>
         <div class="card">
-          <h2>档位参数 <span class="hint">改完下次启动生效</span></h2>
+          <h2>模型参数 <span class="hint">改完下次启动生效</span></h2>
           <div id="settings-profiles" style="display:flex;flex-direction:column;gap:11px"></div>
           <button class="primary" style="margin-top:12px" onclick="saveProfiles()">保存到 profiles.json</button>
         </div>
@@ -923,10 +923,10 @@ function profileHTML(p){
   const busy = !!S.activeJob;
   const btn = p.ready
     ? '<button class="primary go" onclick="startEngine(\'' + p.id + '\')" ' + (p.active || busy ? "disabled" : "") + ">"
-      + (p.active ? "正在运行" : "启动 " + esc(p.title)) + "</button>"
+      + (p.active ? "正在运行" : "启动 " + esc(p.model_label)) + "</button>"
     : '<div class="mute warnc">分片 1 未就绪 · ' + fmtSize(p.have_bytes) + " / " + fmtSize(p.need_bytes) + "</div>";
   return '<div class="profile ' + (p.active ? "active" : "") + '">' +
-    '<div class="head"><b>' + esc(p.title) + '</b><span class="tag">' + esc(p.model_label) + "</span>" +
+    '<div class="head"><b>' + esc(p.model_label) + '</b>' +
       '<span class="tag">' + Math.round(p.ctx/1024) + "K</span>" +
       (p.active ? '<span class="tag cur">当前</span>' : "") + "</div>" +
     '<div class="desc">' + esc(p.desc) + "</div>" +
@@ -1293,7 +1293,7 @@ async function startEngine(id){
     }
     beginJob({ id: r.job.id, kind: "start" });
     toast(switching
-      ? "正在切换 " + active.title + " → " + id + "：先停引擎，再加载（约 40–90 秒）"
+      ? "正在切换 " + active.model_label + " → " + id + "：先停引擎，再加载（约 40–90 秒）"
       : "开始启动 " + id + "（约 40–90 秒）");
   } catch (e){
     const d = e.data || {};
@@ -1417,15 +1417,15 @@ async function loadScan(){
     const s = S.status || await api("/api/status");
     const missing = s.profiles.filter(p => !p.ready);
     $("dl-profile").innerHTML = missing.length
-      ? missing.map(p => '<option value="' + p.id + '">' + esc(p.title) + " · 缺 "
+      ? missing.map(p => '<option value="' + p.id + '">' + esc(p.model_label) + " · 缺 "
           + fmtSize(p.need_bytes - p.have_bytes) + "</option>").join("")
-      : '<option value="">全部档位已就绪</option>';
+      : '<option value="">全部模型已就绪</option>';
   } catch (e){ toast(e.message, true); }
 }
 async function startDownload(){
   const id = $("dl-profile").value;
   if (!id) return;
-  if (!confirm("从 hf-mirror 下载该档位的首个分片？文件很大，可以随时放弃并续传。")) return;
+  if (!confirm("从 hf-mirror 下载该模型的首个分片？文件很大，可以随时放弃并续传。")) return;
   try {
     const r = await api("/api/download", { method:"POST", body: JSON.stringify({ id }) });
     beginJob({ id: r.job.id, kind: "download" });
@@ -1779,7 +1779,7 @@ async function loadSettings(){
       '<b>API Key</b><span class="muted">' + esc(c.key) + "</span>";
     $("settings-profiles").innerHTML = Object.keys(p.profiles).map(id => {
       const pr = p.profiles[id];
-      return '<div class="profile"><div class="head"><b>' + esc(pr.title) + '</b><span class="tag">' + esc(id) + "</span></div>" +
+      return '<div class="profile"><div class="head"><b>' + esc(pr.model_label) + '</b><span class="tag">' + esc(id) + "</span></div>" +
         '<div class="btnrow" style="margin-top:6px">' +
         '<label class="inline">ctx <input class="set-ctx" data-id="' + id + '" type="number" value="' + pr.ctx + '" step="1024" style="width:104px" /></label>' +
         '<label class="inline">kv <select class="set-kv" data-id="' + id + '">' +
