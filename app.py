@@ -597,8 +597,24 @@ def engine_meta():
     return META["data"]
 
 
-LIVE_CACHE = {"t": 0.0, "data": None}
+LIVE_CACHE = {"t": 0.0, "data": None, "log_at": 0.0}
 LIVE_LOCK = threading.Lock()
+
+
+def merge_completed_prefill(live):
+    """Keep sub-second prefill work that transient /metrics samples can miss."""
+    scan_engine_log()
+    with LOG_LOCK:
+        row = dict(LOGSTAT["last"]) if LOGSTAT["last"] else None
+    if not row or not row.get("at") or not row.get("prefill_tps"):
+        return
+    if LIVE_CACHE.get("log_at") == row["at"]:
+        return
+    history = live.setdefault("history", {})
+    series = history.setdefault("prefill_tok_s_mean", [])
+    series.append(row["prefill_tps"])
+    history["prefill_tok_s_mean"] = series[-60:]
+    LIVE_CACHE["log_at"] = row["at"]
 
 
 def engine_live():
@@ -618,6 +634,7 @@ def engine_live():
                 history = {}
             live["history"] = {name: list(history.get(name) or [])[-60:]
                                for name in ("tok_s", "prefill_tok_s_mean")}
+            merge_completed_prefill(live)
             live["sampled_at"] = time.time()
             LIVE_CACHE.update(t=now, data=live)
         except Exception:
