@@ -686,7 +686,9 @@
             </div>
             <div class="btnrow">
               <label class="inline">max_tokens <input id="gw-max" type="number" min="1" max="32768" style="width:88px" /></label>
-              <label class="inline">等待队列 <input id="gw-queue" type="number" min="0" max="20" style="width:58px" /></label>
+              <label class="inline">短队列 tokens <input id="gw-short-queue" type="number" min="1024" style="width:110px" /></label>
+              <label class="inline">长队列 tokens <input id="gw-long-queue" type="number" min="1024" style="width:110px" /></label>
+              <label class="inline">长文阈值 <input id="gw-long-threshold" type="number" min="1024" style="width:96px" /></label>
             </div>
           </div>
           <div class="btnrow" style="margin-top:12px">
@@ -1552,7 +1554,8 @@ function renderGateway(data){
     kpi("今日请求", compact(today.requests), selected ? "按 " + esc(selected.name) + " 筛选" : "累计 " + compact(data.total_requests)) +
     kpi("今日 tokens", compact(today.tokens), "DeepSeek 峰价 " + cny(today.cost_cny || 0) + " / " + usd(today.cost_usd || 0)) +
     kpi("今日拒绝", compact(today.rejected), "鉴权 / 限额 / 上游错误") +
-    kpi("当前请求", nf(g.active), "排队 " + nf(g.waiting) + " · 上限 " + g.queue_size);
+    kpi("当前请求", nf(g.active), "排队 " + nf(g.waiting) + " · 短 " + compact((g.waiting_tokens || {}).short || 0)
+      + " / 长 " + compact((g.waiting_tokens || {}).long || 0) + " tok");
   const base = g.public_url || "";
   const v1 = base ? (base.endsWith("/v1") ? base : base + "/v1") : "（未配置公网 Base URL）";
   const rows = [
@@ -1569,6 +1572,9 @@ function renderGateway(data){
     "<b>每日额度</b><span>按 Key 独立设置</span>" +
     "<b>单次输出</b><span>最多 " + compact(g.max_tokens) + " tokens</span>" +
     "<b>请求体</b><span>最多 " + fmtSize(g.max_body_bytes) + "</span>" +
+    "<b>短队列</b><span>" + compact(g.short_queue_tokens) + " tokens</span>" +
+    "<b>长队列</b><span>" + compact(g.long_queue_tokens) + " tokens</span>" +
+    "<b>长文阈值</b><span>" + compact(g.long_context_threshold) + " tokens</span>" +
     "<b>排队超时</b><span>" + g.queue_timeout_s + " 秒</span>";
   $("gateway-frpc").textContent = '# frpc.toml；云侧仍应限制端口并配置 HTTPS\n'
     + '[[proxies]]\nname = "strata-gateway"\ntype = "tcp"\n'
@@ -1642,7 +1648,9 @@ function fillGatewaySettings(g){
   $("gw-port").value = g.port;
   $("gw-rate").value = g.rate_per_min;
   $("gw-max").value = g.max_tokens;
-  $("gw-queue").value = g.queue_size;
+  $("gw-short-queue").value = g.short_queue_tokens;
+  $("gw-long-queue").value = g.long_queue_tokens;
+  $("gw-long-threshold").value = g.long_context_threshold;
 }
 async function saveGateway(){
   try {
@@ -1652,7 +1660,9 @@ async function saveGateway(){
       port:parseInt($("gw-port").value, 10),
       rate_per_min:parseInt($("gw-rate").value, 10),
       max_tokens:parseInt($("gw-max").value, 10),
-      queue_size:parseInt($("gw-queue").value, 10)
+      short_queue_tokens:parseInt($("gw-short-queue").value, 10),
+      long_queue_tokens:parseInt($("gw-long-queue").value, 10),
+      long_context_threshold:parseInt($("gw-long-threshold").value, 10)
     }) });
     fillGatewaySettings(r.gateway);
     toast(r.gateway.running ? "Gateway 已启动" : "配置已保存，Gateway 已关闭");

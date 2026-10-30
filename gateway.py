@@ -27,7 +27,9 @@ DEFAULT_CONFIG = {
     "daily_tokens": 1000000,
     "max_body_bytes": 4194304,
     "max_tokens": 8192,
-    "queue_size": 2,
+    "short_queue_tokens": 262144,
+    "long_queue_tokens": 1048576,
+    "long_context_threshold": 32768,
     "queue_timeout_s": 30,
     "upstream_timeout_s": 1800,
 }
@@ -37,7 +39,9 @@ LIMITS = {
     "rate_per_min": (1, 1000),
     "max_body_bytes": (65536, 67108864),
     "max_tokens": (1, 32768),
-    "queue_size": (0, 20),
+    "short_queue_tokens": (1024, 268435456),
+    "long_queue_tokens": (1024, 268435456),
+    "long_context_threshold": (1024, 1048576),
     "queue_timeout_s": (1, 300),
     "upstream_timeout_s": (30, 86400),
 }
@@ -149,6 +153,35 @@ def hash_key(key):
     return hashlib.sha256(key.encode("utf-8")).hexdigest()
 
 
+def estimate_context_tokens(data):
+    if not isinstance(data, dict):
+        return 0
+    state = {"bytes": 0, "images": 0}
+
+    def measure(value, key=""):
+        if isinstance(value, dict):
+            kind = str(value.get("type") or value.get("kind") or "").lower()
+            if kind in ("image", "image_url", "input_image"):
+                state["images"] += 1
+                return
+            for child_key, child in value.items():
+                measure(child, child_key)
+        elif isinstance(value, list):
+            for child in value:
+                measure(child, key)
+        elif isinstance(value, str):
+            if value.startswith("data:image/"):
+                state["images"] += 1
+            elif key not in ("model", "role", "type", "kind"):
+                state["bytes"] += len(value.encode("utf-8"))
+        elif value is not None:
+            state["bytes"] += 1
+
+    measure(data)
+    output = data.get("max_tokens") or 0
+    return max(1, (state["bytes"] + 2) // 3) + state["images"] * 2048 + 32 + output
+
+
 class Reject(Exception):
     def __init__(self, status, message, retry_after=None):
         super().__init__(message)
@@ -174,8 +207,14 @@ class GatewayService:
         self.state_file = self.app_dir / "gateway-state.json"
         self.audit_file = self.app_dir / "gateway-audit.jsonl"
         self.lock = threading.RLock()
-        self.slot = threading.Semaphore(1)
+        self.condition = threading.Condition(self.lock)
+        self.queue = {}
+        self.queue_tokens = {"short": 0, "long": 0}
+        self.queue_sequence = 0
+        self.schedule = 0
         self.active = 0
+        self.active_kind = ""
+        self.active_tokens = 0
         self.waiting = 0
         self.httpd = None
         self.thread = None
@@ -263,7 +302,10 @@ class GatewayService:
                 "key_id": active_keys[0]["id"] if active_keys else "",
                 "key_count": len(self.config["keys"]),
                 "active": self.active,
+                "active_kind": self.active_kind,
+                "active_tokens": self.active_tokens,
                 "waiting": self.waiting,
+                "waiting_tokens": dict(self.queue_tokens),
             })
             return cfg
 
@@ -405,25 +447,59 @@ class GatewayService:
                 symbol = "$" if currency == "USD" else "¥"
                 raise Reject(429, f"Key「{item['name']}」已达到今日金额额度 {symbol}{money['amount']:g}")
 
-    def _enter_queue(self):
-        with self.lock:
-            if self.active and self.waiting >= self.config["queue_size"]:
-                raise Reject(429, "请求队列已满", 5)
+    def _next_ticket_locked(self):
+        if self.active or not self.queue:
+            return None
+        kinds = {item["kind"] for item in self.queue.values()}
+        if len(kinds) == 2:
+            kind = "long" if self.schedule % 3 == 2 else "short"
+        else:
+            kind = next(iter(kinds))
+        self.schedule += 1
+        return min(ticket for ticket, item in self.queue.items() if item["kind"] == kind)
+
+    def _enter_queue(self, context_tokens=0):
+        kind = "long" if context_tokens >= self.config["long_context_threshold"] else "short"
+        budget = self.config[kind + "_queue_tokens"]
+        if context_tokens > budget:
+            raise Reject(429, f"单请求超过{kind}上下文队列预算 {budget} tokens", 5)
+        deadline = time.monotonic() + self.config["queue_timeout_s"]
+        with self.condition:
+            if self.queue_tokens[kind] + context_tokens > budget:
+                raise Reject(429, f"{kind}上下文队列 token 预算已满", 5)
+            self.queue_sequence += 1
+            ticket = self.queue_sequence
+            self.queue[ticket] = {"kind": kind, "tokens": context_tokens}
+            self.queue_tokens[kind] += context_tokens
             self.waiting += 1
-        try:
-            acquired = self.slot.acquire(timeout=self.config["queue_timeout_s"])
-        finally:
-            with self.lock:
-                self.waiting -= 1
-        if not acquired:
-            raise Reject(429, "排队超时", 5)
-        with self.lock:
-            self.active += 1
+            acquired = False
+            try:
+                while True:
+                    if self._next_ticket_locked() == ticket:
+                        acquired = True
+                        break
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        break
+                    self.condition.wait(remaining)
+                if not acquired:
+                    raise Reject(429, "排队超时", 5)
+                self.active = 1
+                self.active_kind = kind
+                self.active_tokens = context_tokens
+            finally:
+                item = self.queue.pop(ticket, None)
+                if item is not None:
+                    self.queue_tokens[kind] = max(0, self.queue_tokens[kind] - item["tokens"])
+                self.waiting = max(0, self.waiting - 1)
+                self.condition.notify_all()
 
     def _leave_queue(self):
-        with self.lock:
-            self.active = max(0, self.active - 1)
-        self.slot.release()
+        with self.condition:
+            self.active = 0
+            self.active_kind = ""
+            self.active_tokens = 0
+            self.condition.notify_all()
 
     def _engine_model(self):
         conn = http.client.HTTPConnection(self.upstream, self.upstream_port, timeout=3)
@@ -686,7 +762,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
             gateway._check_rate()
             if self.command == "GET" and gateway.models is not None:
                 gateway._check_quota(key_id)
-                gateway._enter_queue()
+                gateway._enter_queue(estimate_context_tokens(data))
                 try:
                     return self._send_models(gateway.models())
                 finally:
@@ -712,7 +788,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 if "stream" in data and not isinstance(data["stream"], bool):
                     raise Reject(400, "stream 必须是布尔值")
                 stream = bool(data.get("stream"))
-            gateway._enter_queue()
+            gateway._enter_queue(estimate_context_tokens(data))
             try:
                 gateway._check_quota(key_id)
                 if self.command == "POST":
