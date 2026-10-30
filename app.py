@@ -58,6 +58,7 @@ from pathlib import Path
 
 from gateway import GatewayService
 from frp import FrpcService
+from token_counter import TokenCounter
 
 APP_DIR = Path(__file__).resolve().parent
 ROOT = Path(os.environ.get("STRATA_LAB_ROOT", str(APP_DIR.parent))).resolve()
@@ -1338,6 +1339,18 @@ def ensure_engine_model(served_id):
 
 GATEWAY.models = model_catalog
 GATEWAY.on_switch = ensure_engine_model
+REQUEST_TOKEN_COUNTER = TokenCounter(DATA / "packs", DATA / "terminal" / "current" / "tools",
+                                     DATA / "terminal" / "current" / "serve")
+
+
+def count_request_tokens(served_id, data, path):
+    profile = next((p for p in PROFILES.values() if p.get("served_id") == served_id), None)
+    if profile is None:
+        raise LookupError(served_id)
+    return REQUEST_TOKEN_COUNTER.count(profile["model"], data, path)
+
+
+GATEWAY.counter = count_request_tokens
 
 
 # ---------------------------------------------------------------- chat / bench

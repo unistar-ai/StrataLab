@@ -197,12 +197,13 @@ class GatewayServer(ThreadingHTTPServer):
 
 class GatewayService:
     def __init__(self, app_dir, upstream="127.0.0.1", upstream_port=8080,
-                 models=None, on_switch=None):
+                 models=None, on_switch=None, counter=None):
         self.app_dir = Path(app_dir)
         self.upstream = upstream
         self.upstream_port = upstream_port
         self.models = models
         self.on_switch = on_switch
+        self.counter = counter
         self.config_file = self.app_dir / "gateway.json"
         self.state_file = self.app_dir / "gateway-state.json"
         self.audit_file = self.app_dir / "gateway-audit.jsonl"
@@ -232,6 +233,14 @@ class GatewayService:
             return validate_config(json.loads(self.config_file.read_text(encoding="utf-8")))
         except (OSError, ValueError, TypeError, json.JSONDecodeError):
             return dict(DEFAULT_CONFIG)
+
+    def context_tokens(self, data, path):
+        if self.counter is not None and isinstance(data, dict) and data.get("model"):
+            try:
+                return self.counter(data["model"], data, path)
+            except Exception as exc:
+                raise Reject(400, f"无法计算目标模型 token 数：{str(exc)[:200]}")
+        return estimate_context_tokens(data)
 
     def _load_state(self):
         blank = {"total_requests": 0, "total_tokens": 0, "days": {}, "key_days": {}}
@@ -762,7 +771,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
             gateway._check_rate()
             if self.command == "GET" and gateway.models is not None:
                 gateway._check_quota(key_id)
-                gateway._enter_queue(estimate_context_tokens(data))
+                gateway._enter_queue(gateway.context_tokens(data, path))
                 try:
                     return self._send_models(gateway.models())
                 finally:
@@ -788,7 +797,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 if "stream" in data and not isinstance(data["stream"], bool):
                     raise Reject(400, "stream 必须是布尔值")
                 stream = bool(data.get("stream"))
-            gateway._enter_queue(estimate_context_tokens(data))
+            gateway._enter_queue(gateway.context_tokens(data, path))
             try:
                 gateway._check_quota(key_id)
                 if self.command == "POST":
