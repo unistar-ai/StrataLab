@@ -34,6 +34,11 @@ DEFAULT_CONFIG = {
     "content_max_chars": 20000,
     "queue_timeout_s": 30,
     "upstream_timeout_s": 1800,
+    "low_resource": False,
+    "low_resource_model": "",
+    "low_resource_return_model": "",
+    "low_resource_max_tokens": 8192,
+    "low_resource_context_tokens": 32768,
 }
 
 LIMITS = {
@@ -47,6 +52,8 @@ LIMITS = {
     "content_max_chars": (1000, 100000),
     "queue_timeout_s": (1, 300),
     "upstream_timeout_s": (30, 86400),
+    "low_resource_max_tokens": (1, 32768),
+    "low_resource_context_tokens": (1024, 262144),
 }
 
 ALLOWED_ROUTES = {
@@ -97,6 +104,13 @@ def validate_config(data):
         raise ValueError("enabled 必须是布尔值")
     if not isinstance(cfg["store_content"], bool):
         raise ValueError("store_content 必须是布尔值")
+    if not isinstance(cfg["low_resource"], bool):
+        raise ValueError("low_resource 必须是布尔值")
+    for key in ("low_resource_model", "low_resource_return_model"):
+        if not isinstance(cfg[key], str) or len(cfg[key]) > 200:
+            raise ValueError(f"{key} 必须是最长 200 字符的字符串")
+    if cfg["low_resource"] and not cfg["low_resource_model"]:
+        raise ValueError("低占用模式必须指定目标模型")
     for key, (low, high) in LIMITS.items():
         value = cfg[key]
         if isinstance(value, bool) or not isinstance(value, int) or not low <= value <= high:
@@ -267,6 +281,7 @@ class GatewayService:
         self.active_kind = ""
         self.active_tokens = 0
         self.waiting = 0
+        self.mode_changing = False
         self.httpd = None
         self.thread = None
         self.rate = deque()
@@ -387,6 +402,38 @@ class GatewayService:
             data["thinking"] = {"type": "disabled"}
         return data
 
+    def route_model(self, model):
+        if self.config["low_resource"]:
+            return self.config["low_resource_model"]
+        return model
+
+    def max_tokens_limit(self):
+        if self.config["low_resource"]:
+            return self.config["low_resource_max_tokens"]
+        return self.config["max_tokens"]
+
+    def begin_mode_change(self):
+        with self.condition:
+            if self.mode_changing:
+                raise RuntimeError("另一个模式切换正在进行")
+            self.mode_changing = True
+            deadline = time.monotonic() + self.config["upstream_timeout_s"]
+            try:
+                while self.active or self.waiting:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise TimeoutError("等待已接收请求完成时超时")
+                    self.condition.wait(remaining)
+            except Exception:
+                self.mode_changing = False
+                self.condition.notify_all()
+                raise
+
+    def end_mode_change(self):
+        with self.condition:
+            self.mode_changing = False
+            self.condition.notify_all()
+
     def public(self):
         with self.lock:
             active_keys = self._active_keys()
@@ -401,6 +448,7 @@ class GatewayService:
                 "active_kind": self.active_kind,
                 "active_tokens": self.active_tokens,
                 "waiting": self.waiting,
+                "mode_changing": self.mode_changing,
                 "waiting_tokens": dict(self.queue_tokens),
             })
             return cfg
@@ -563,12 +611,17 @@ class GatewayService:
         return min(ticket for ticket, item in self.queue.items() if item["kind"] == kind)
 
     def _enter_queue(self, context_tokens=0):
+        if self.config["low_resource"] and context_tokens > self.config["low_resource_context_tokens"]:
+            raise Reject(400, "低占用模式的输入与 max_tokens 合计不能超过 "
+                              f"{self.config['low_resource_context_tokens']} tokens")
         kind = "long" if context_tokens >= self.config["long_context_threshold"] else "short"
         budget = self.config[kind + "_queue_tokens"]
         if context_tokens > budget:
             raise Reject(429, f"单请求超过{kind}上下文队列预算 {budget} tokens", 5)
         deadline = time.monotonic() + self.config["queue_timeout_s"]
         with self.condition:
+            if self.mode_changing:
+                raise Reject(503, "正在切换运行模式，请稍后重试", 5)
             if self.queue_tokens[kind] + context_tokens > budget:
                 raise Reject(429, f"{kind}上下文队列 token 预算已满", 5)
             self.queue_sequence += 1
@@ -874,6 +927,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
         key_id = ""
         key_name = ""
         model = ""
+        requested_model = ""
         stream = False
         usage = {}
         content = {"request": "", "response": "", "reasoning": ""}
@@ -883,7 +937,8 @@ class GatewayHandler(BaseHTTPRequestHandler):
         path = self.path.partition("?")[0]
         try:
             if self.command == "GET" and path in ("/", "/favicon.ico"):
-                return self._empty(204 if path == "/favicon.ico" else 200)
+                status = self._empty(204 if path == "/favicon.ico" else 200)
+                return status
             if self.command == "GET" and path == "/v1/models":
                 pass
             elif self.command == "POST" and path in ("/v1/chat/completions", "/v1/messages"):
@@ -907,9 +962,12 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 data = self._read_json()
                 data = gateway.apply_key_policy(key_id, data, path)
                 content["request"] = sanitize_request(data, gateway.config["content_max_chars"])
-                model = data.get("model") or ""
-                if not isinstance(model, str) or not model or len(model) > 200:
+                requested_model = data.get("model") or ""
+                if not isinstance(requested_model, str) or not requested_model or len(requested_model) > 200:
                     raise Reject(400, "model 必填")
+                model = gateway.route_model(requested_model)
+                data["model"] = model
+                max_limit = gateway.max_tokens_limit()
                 if path == "/v1/chat/completions":
                     if "max_completion_tokens" in data:
                         alternate = data["max_completion_tokens"]
@@ -917,11 +975,11 @@ class GatewayHandler(BaseHTTPRequestHandler):
                             raise Reject(400, "max_tokens 与 max_completion_tokens 不能不一致")
                         data["max_tokens"] = alternate
                         data.pop("max_completion_tokens")
-                    data.setdefault("max_tokens", gateway.config["max_tokens"])
+                    data.setdefault("max_tokens", max_limit)
                 max_tokens = data.get("max_tokens")
                 if (isinstance(max_tokens, bool) or not isinstance(max_tokens, int)
-                        or not 1 <= max_tokens <= gateway.config["max_tokens"]):
-                    raise Reject(400, f"max_tokens 范围为 1–{gateway.config['max_tokens']}；Anthropic 请求必填")
+                        or not 1 <= max_tokens <= max_limit):
+                    raise Reject(400, f"max_tokens 范围为 1–{max_limit}；Anthropic 请求必填")
                 if "stream" in data and not isinstance(data["stream"], bool):
                     raise Reject(400, "stream 必须是布尔值")
                 stream = bool(data.get("stream"))
@@ -975,6 +1033,8 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 "route": path,
                 "method": self.command,
                 "model": model,
+                "requested_model": requested_model,
+                "low_resource": bool(requested_model and gateway.config["low_resource"]),
                 "status": status,
                 "ms": round((time.monotonic() - started) * 1000),
                 "prompt_tokens": prompt,

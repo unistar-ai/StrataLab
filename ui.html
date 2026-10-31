@@ -334,6 +334,14 @@
   <section class="tab on" id="tab-dash">
     <div class="banner" id="banner"></div>
 
+    <div class="card">
+      <h2>游戏低占用模式 <span class="hint" id="mode-state">读取中…</span></h2>
+      <div class="muted">所有 Gateway 请求固定路由到 Qwen3.6-35B-A3B Q4，32K 上下文、最多 8K 输出，为游戏预留 8 GiB 显存。切换会等待已接收请求完成。</div>
+      <div class="btnrow" style="margin-top:12px">
+        <button class="primary" id="mode-toggle" onclick="toggleLowResource()">进入低占用模式</button>
+      </div>
+    </div>
+
     <div class="sec">
       <div>
         <div class="eyebrow">状态</div>
@@ -728,7 +736,7 @@
           </div>
           <div class="mute" style="margin-top:10px;line-height:1.8">
             完整 Key 只显示一次，服务端仅保存 SHA-256；命名、独立额度和删除在“密钥”页管理。<br />
-            只开放 /v1/models、/v1/chat/completions、/v1/messages；模型名必须与当前引擎一致。OpenAI 支持 max_tokens / max_completion_tokens。
+            只开放 /v1/models、/v1/chat/completions、/v1/messages；普通模式自动加载请求模型，低占用模式统一路由到 35B-A3B。OpenAI 支持 max_tokens / max_completion_tokens。
           </div>
         </div>
         <div class="card">
@@ -847,7 +855,7 @@ function openTab(name){
   document.querySelectorAll("#nav button").forEach(b => b.classList.toggle("on", b.dataset.tab === name));
   document.querySelectorAll(".tab").forEach(t => t.classList.toggle("on", t.id === "tab-" + name));
   try { history.replaceState(null, "", "#" + name); } catch {}
-  if (name === "dash") loadLive();
+  if (name === "dash") { loadLive(); loadLowResource(); }
   if (name === "models") loadScan();
   if (name === "term") termEnter();
   if (name === "history") loadHistory();
@@ -963,7 +971,7 @@ function profileHTML(p){
       '<span class="tag">' + Math.round(p.ctx/1024) + "K</span>" +
       (p.active ? '<span class="tag cur">当前</span>' : "") + "</div>" +
     '<div class="desc">' + esc(p.desc) + "</div>" +
-    '<div class="meta">' + esc(p.speed) + " · kv " + esc(p.kv) + "</div>" + btn + "</div>";
+    '<div class="meta">' + esc(p.speed) + " · kv " + esc(p.kv || "native") + "</div>" + btn + "</div>";
 }
 function renderProfiles(){
   const s = S.status;
@@ -1572,9 +1580,42 @@ async function loadLogs(force){
 }
 
 /* ------------------------------------------------------------------ gateway */
+function renderLowResource(g){
+  S.lowResource = g;
+  const enabled = !!g.low_resource;
+  const changing = !!g.mode_changing || !!S.modeChanging;
+  const game = S.status && (S.status.profiles || []).find(p => p.id === "game");
+  $("mode-state").textContent = changing ? "正在等待请求并切换模型…"
+    : (enabled ? "已启用 · 35B-A3B Q4 · 32K" : "未启用");
+  const button = $("mode-toggle");
+  button.textContent = enabled ? "退出低占用模式" : (game && !game.ready ? "模型未就绪" : "进入低占用模式");
+  button.disabled = changing || (!enabled && game && !game.ready);
+}
+async function loadLowResource(){
+  try { renderLowResource((await api("/api/gateway")).gateway); }
+  catch { $("mode-state").textContent = "读取失败"; }
+}
+async function toggleLowResource(){
+  const enabled = !(S.lowResource && S.lowResource.low_resource);
+  if (enabled && !confirm("将等待已接收请求完成，卸载当前模型并加载 35B-A3B Q4。确定进入游戏低占用模式吗？")) return;
+  S.modeChanging = true;
+  if (S.lowResource) renderLowResource(S.lowResource);
+  try {
+    const r = await api("/api/mode", { method:"POST", body:JSON.stringify({ enabled:enabled }) });
+    renderLowResource(r.gateway);
+    toast(enabled ? "已进入游戏低占用模式" : "已恢复普通模式");
+    await loadStatus();
+  } catch (e){ toast(e.message, true); }
+  finally {
+    S.modeChanging = false;
+    if (S.lowResource) renderLowResource(S.lowResource);
+  }
+}
+
 function renderGateway(data){
   S.gateway = data;
   const g = data.gateway, today = data.today || {};
+  renderLowResource(g);
   $("gateway-audit-note").textContent = "FRP 只转发 Gateway，不要直接转发引擎 8080。本机 Gateway 只监听 127.0.0.1；公网 HTTPS 由云服务器提供。"
     + (g.store_content ? "本机记录提示词和生成内容；不保存 API Key。" : "审计不保存 API Key、提示词或生成内容。");
   const state = $("gateway-state");
@@ -1621,9 +1662,12 @@ function renderGateway(data){
     + (items.length ? items.map(it => {
       const ok = it.status >= 200 && it.status < 400;
       const keyName = it.key_name && it.key_name !== "—" ? it.key_name : (names[it.key_id] || it.key_id);
+      const modelTitle = it.requested_model && it.requested_model !== it.model
+        ? it.requested_model + " → " + it.model : (it.model || "");
       return '<tr><td class="mono">' + new Date(it.ts * 1000).toLocaleString("zh-CN", { hour12:false })
         + '</td><td>' + esc(keyName) + '<div class="mute mono">' + esc(it.key_id) + '</div></td>'
-        + '<td class="mono" title="' + esc(it.model || "") + '">' + esc(it.route) + (it.stream ? " · SSE" : "")
+        + '<td class="mono" title="' + esc(modelTitle) + '">' + esc(it.route) + (it.stream ? " · SSE" : "")
+        + (it.low_resource ? " · 低占用" : "")
         + '</td><td class="' + (ok ? "okc" : "errc") + '" title="' + esc(it.error || "") + '">' + it.status
         + '</td><td>' + nf(it.ms) + ' ms</td><td>' + compact(it.total_tokens)
         + '<div class="mute">' + cny(it.cost_cny || 0) + ' / ' + usd(it.cost_usd || 0) + '</div></td>'
@@ -1850,11 +1894,13 @@ async function loadSettings(){
       '<b>API Key</b><span class="muted">' + esc(c.key) + "</span>";
     $("settings-profiles").innerHTML = Object.keys(p.profiles).map(id => {
       const pr = p.profiles[id];
+      const nativeKV = pr.family === "qwen36";
       return '<div class="profile"><div class="head"><b>' + esc(pr.model_label) + '</b><span class="tag">' + esc(id) + "</span></div>" +
         '<div class="btnrow" style="margin-top:6px">' +
         '<label class="inline">ctx <input class="set-ctx" data-id="' + id + '" type="number" value="' + pr.ctx + '" step="1024" style="width:104px" /></label>' +
-        '<label class="inline">kv <select class="set-kv" data-id="' + id + '">' +
-          ["k8v4","int8","q4_0"].map(k => "<option " + (pr.kv === k ? "selected" : "") + ">" + k + "</option>").join("") +
+        '<label class="inline">kv <select class="set-kv" data-id="' + id + '" ' + (nativeKV ? "disabled" : "") + '>' +
+          (nativeKV ? '<option value="">native</option>' :
+            ["k8v4","int8","q4_0"].map(k => "<option " + (pr.kv === k ? "selected" : "") + ">" + k + "</option>").join("")) +
         "</select></label>" +
         '<label class="inline">vision <select class="set-vision" data-id="' + id + '">' +
           ["cpu","off","gpu"].map(v => "<option " + (pr.vision === v ? "selected" : "") + ">" + v + "</option>").join("") +
@@ -1870,7 +1916,7 @@ async function saveProfiles(){
     out[el.dataset.id] = out[el.dataset.id] || {};
     out[el.dataset.id].ctx = parseInt(el.value, 10);
   });
-  document.querySelectorAll(".set-kv").forEach(el => { out[el.dataset.id].kv = el.value; });
+  document.querySelectorAll(".set-kv").forEach(el => { if (!el.disabled) out[el.dataset.id].kv = el.value; });
   document.querySelectorAll(".set-vision").forEach(el => { out[el.dataset.id].vision = el.value; });
   document.querySelectorAll(".set-parallel").forEach(el => { out[el.dataset.id].parallel = parseInt(el.value, 10); });
   try {
@@ -2037,6 +2083,7 @@ document.addEventListener("visibilitychange", () => { if (!document.hidden) beat
 window.addEventListener("focus", beat);
 
 loadStatus().catch(e => toast("状态读取失败: " + e.message, true));
+loadLowResource();
 loadStats();
 loadMetrics();
 (() => {
@@ -2048,7 +2095,7 @@ document.addEventListener("visibilitychange", () => { if (!document.hidden) load
 setInterval(loadLive, 500);
 setInterval(() => loadStatus().catch(() => {}), 5000);
 setInterval(() => loadStats(), 4000);
-setInterval(() => { if (S.tab === "dash") loadMetrics(); }, 3000);
+setInterval(() => { if (S.tab === "dash") { loadMetrics(); loadLowResource(); } }, 3000);
 setInterval(() => { if (S.tab === "gateway") { loadGateway(); loadFrp(); } }, 4000);
 setInterval(() => { if (S.tab === "logs") loadLogs(); }, 8000);
 </script>

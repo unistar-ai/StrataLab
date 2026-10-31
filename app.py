@@ -9,6 +9,7 @@ Zero dependency (stdlib only), binds 127.0.0.1. Backend for ui.html.
   GET  /api/gateway          public API gateway config, counters and audit metadata
   GET  /api/gateway/content  optional request/response content by audit ID
   POST /api/gateway          update optional gateway configuration
+  POST /api/mode             {enabled} switch normal / low-resource routing and model
   POST /api/gateway/key      register a named API key (returned once, stored hashed)
   POST /api/gateway/key/update  rename, change quota, enable or disable a key
   POST /api/gateway/key/delete  permanently delete a key, retaining its audit history
@@ -133,6 +134,21 @@ DEFAULT_PROFILES = {
         "speed": "实测 decode 33–38 tok/s · 预填 ~945 tok/s",
         "shard": ["Qwen3.8-Flash-Next-UD-IQ4_XS-00001-of-00003.gguf", 10946624],
         "repo_dir": "UD-IQ4_XS",
+    },
+    "game": {
+        "title": "35B-A3B Q4", "model_label": "Qwen3.6-35B-A3B · Q4",
+        "family": "qwen36", "model": "ud-q4_k_xl",
+        "token_model": "qwen36-ud-q4_k_xl",
+        "path": str(MODELS_ROOT / "qwen36-UD-Q4_K_XL"),
+        "served_id": "qwen3.6-35b-a3b-ud-q4_k_xl",
+        "ctx": 32768, "kv": "", "vision": "off", "parallel": 1,
+        "extra": ["--set", "expert-vram=5.0"],
+        "desc": "游戏低占用模式。35B 总参数、约 3B 激活，32K 上下文，单请求运行，预留 8 GiB 显存。",
+        "speed": "22.9 GB 权重 · 资源占用远低于 Flash-Next",
+        "shard": ["Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf", 22853663008],
+        "repo": "unsloth/Qwen3.6-35B-A3B-MTP-GGUF",
+        "download_url": ("https://modelscope.cn/models/unsloth/Qwen3.6-35B-A3B-MTP-GGUF/"
+                         "resolve/master/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf"),
     },
 }
 
@@ -1245,10 +1261,12 @@ def start_engine(pid, force=False):
         args = [str(STRATA_CMD), "launch",
                 "--model-path", p["path"], "--family", p["family"], "--model", p["model"],
                 "--data-dir", str(DATA), "--context", str(int(p.get("ctx", 262144))),
-                "--kv", p.get("kv", "k8v4"), "--vision", p.get("vision", "cpu"),
+                "--vision", p.get("vision", "cpu"),
                 "--parallel", str(int(p.get("parallel", 1))),
                 "--tune", "skip", "--feed", str(FEED), "--access", "local",
                 "--port", "8080", "--no-tui", "--yes"] + list(p.get("extra") or [])
+        if p.get("kv"):
+            args += ["--kv", p["kv"]]
         log_path = LOGS / f"launch-{pid}-{int(time.time())}.log"
         log = open(log_path, "w", encoding="utf-8")
         env = dict(os.environ, HF_ENDPOINT=HF)
@@ -1259,7 +1277,8 @@ def start_engine(pid, force=False):
         proc = subprocess.Popen(args, stdout=log, stderr=subprocess.STDOUT, env=env,
                                 creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | NOWINDOW)
         job["proc"] = proc
-        deadline = time.time() + 300
+        timeout_s = 900 if p.get("family") == "qwen36" else 300
+        deadline = time.time() + timeout_s
         while time.time() < deadline:
             if job["cancel"].is_set():
                 finish(job, "cancelled", "已放弃等待（引擎可能仍在启动）")
@@ -1281,7 +1300,7 @@ def start_engine(pid, force=False):
                 append_history({"kind": "start", "profile": pid, "ok": True, "note": note})
                 return
             time.sleep(2)
-        finish(job, "failed", "300 秒内没有 ready，请看引擎日志")
+        finish(job, "failed", f"{timeout_s} 秒内没有 ready，请看引擎日志")
 
     job = new_job("start", profile=pid, title=p["title"], log=engine_log_for(pid).name)
     threading.Thread(target=run, daemon=True).start()
@@ -1310,7 +1329,9 @@ def model_catalog():
             "owned_by": "local",
             "status": {"value": "loaded" if current_id == profile["served_id"] else "available"},
             "meta": {"n_ctx": int(profile.get("ctx", 262144))},
-            "architecture": {"input_modalities": ["text", "image"], "output_modalities": ["text"]},
+            "architecture": {"input_modalities": (["text"] if profile.get("vision") == "off"
+                                                  else ["text", "image"]),
+                             "output_modalities": ["text"]},
         })
     return {"object": "list", "data": items}
 
@@ -1327,7 +1348,8 @@ def ensure_engine_model(served_id):
         if not ready(pid)[0]:
             raise RuntimeError("模型文件未就绪")
         job = start_engine(pid, force=True)
-        deadline = time.time() + 330
+        timeout_s = 930 if PROFILES[pid].get("family") == "qwen36" else 330
+        deadline = time.time() + timeout_s
         while time.time() < deadline:
             current = health()
             if current and current.get("loaded") and current.get("model") == served_id:
@@ -1336,6 +1358,43 @@ def ensure_engine_model(served_id):
                 raise RuntimeError(job.get("detail") or "模型加载失败")
             time.sleep(0.5)
         raise TimeoutError("模型加载超时")
+
+
+def set_low_resource(enabled):
+    if not isinstance(enabled, bool):
+        raise ValueError("enabled 必须是布尔值")
+    if enabled == GATEWAY.config["low_resource"]:
+        return GATEWAY.public()
+    low_model = PROFILES["game"]["served_id"]
+    current = health() or {}
+    current_model = current.get("model", "") if current.get("loaded") else ""
+    if enabled:
+        target = low_model
+        return_model = (current_model if current_model and current_model != low_model
+                        else GATEWAY.config["low_resource_return_model"]
+                        or PROFILES["balanced"]["served_id"])
+    else:
+        target = (GATEWAY.config["low_resource_return_model"]
+                  or PROFILES["balanced"]["served_id"])
+        return_model = ""
+    target_pid = next((pid for pid, profile in PROFILES.items()
+                       if profile["served_id"] == target), None)
+    if target_pid is None or not ready(target_pid)[0]:
+        raise RuntimeError("目标模型文件未就绪")
+    previous = {key: GATEWAY.config[key] for key in
+                ("low_resource", "low_resource_model", "low_resource_return_model")}
+    GATEWAY.begin_mode_change()
+    try:
+        GATEWAY.configure({"low_resource": enabled, "low_resource_model": low_model,
+                           "low_resource_return_model": return_model})
+        try:
+            ensure_engine_model(target)
+        except Exception:
+            GATEWAY.configure(previous)
+            raise
+    finally:
+        GATEWAY.end_mode_change()
+    return GATEWAY.public()
 
 
 GATEWAY.models = model_catalog
@@ -1348,7 +1407,7 @@ def count_request_tokens(served_id, data, path):
     profile = next((p for p in PROFILES.values() if p.get("served_id") == served_id), None)
     if profile is None:
         raise LookupError(served_id)
-    return REQUEST_TOKEN_COUNTER.count(profile["model"], data, path)
+    return REQUEST_TOKEN_COUNTER.count(profile.get("token_model", profile["model"]), data, path)
 
 
 GATEWAY.counter = count_request_tokens
@@ -1470,8 +1529,10 @@ def download_shard(job, pid, limit_bytes=None):
     p = PROFILES[pid]
     name, size = p["shard"][0], int(p["shard"][1])
     dest = Path(p["path"]) / name
+    dest.parent.mkdir(parents=True, exist_ok=True)
     part = dest.with_suffix(dest.suffix + ".labpart")
-    url = f"{HF}/{HF_REPO}/resolve/main/{p.get('repo_dir', pid)}/{name}"
+    repo_dir = p.get("repo_dir")
+    url = p.get("download_url") or f"{HF}/{p.get('repo', HF_REPO)}/resolve/main/{repo_dir + '/' if repo_dir else ''}{name}"
     job["url"] = url
     job["total"] = size
     have = part.stat().st_size if part.exists() else 0
@@ -1512,6 +1573,7 @@ def download_shard(job, pid, limit_bytes=None):
         finish(job, "failed", f"大小不符：{got} / {size} 字节")
         return
     part.replace(dest)
+    dest.with_name(dest.name + ".done").write_text(time.strftime("%Y-%m-%d %H:%M"), encoding="utf-8")
     finish(job, "ready", f"{name} 下载完成（{size/2**30:.1f} GB）", result={"bytes": size})
     append_history({"kind": "download", "profile": pid, "ok": True,
                     "note": f"{name} {size/2**30:.1f} GB"})
@@ -1733,6 +1795,12 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 return self.reply({"ok": True, "gateway": GATEWAY.configure(data)})
             except (ValueError, OSError) as exc:
+                return self.reply({"ok": False, "error": str(exc)}, 400)
+
+        if path == "/api/mode":
+            try:
+                return self.reply({"ok": True, "gateway": set_low_resource(data.get("enabled"))})
+            except (ValueError, RuntimeError, TimeoutError, OSError) as exc:
                 return self.reply({"ok": False, "error": str(exc)}, 400)
 
         if path == "/api/gateway/key":
