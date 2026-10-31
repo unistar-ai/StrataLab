@@ -567,7 +567,7 @@
       </div>
     </div>
     <div class="banner info show">
-      <span>FRP 只转发 Gateway，不要直接转发引擎 8080。本机 Gateway 只监听 127.0.0.1；公网 HTTPS 由云服务器提供。审计不保存 API Key、提示词或生成内容。</span>
+      <span id="gateway-audit-note">FRP 只转发 Gateway，不要直接转发引擎 8080。本机 Gateway 只监听 127.0.0.1；公网 HTTPS 由云服务器提供。</span>
     </div>
     <div class="kpi3" id="gateway-kpis"></div>
     <div class="cols">
@@ -597,6 +597,15 @@
         <button class="mini danger" onclick="clearGatewayAudit()">清空审计与用量</button>
       </div>
       <div style="overflow:auto"><table id="gateway-audit-table"></table></div>
+    </div>
+    <div class="card" id="audit-content-card" style="display:none">
+      <h2>请求内容 <span class="hint" id="audit-content-meta"></span></h2>
+      <div class="eyebrow">提示词与工具</div>
+      <pre class="logbox" id="audit-request" style="flex:initial;min-height:0;max-height:320px"></pre>
+      <div class="eyebrow" style="margin-top:12px">生成内容</div>
+      <pre class="logbox" id="audit-response" style="flex:initial;min-height:0;max-height:320px"></pre>
+      <div class="eyebrow" style="margin-top:12px">思考过程</div>
+      <pre class="logbox" id="audit-reasoning" style="flex:initial;min-height:0;max-height:320px"></pre>
     </div>
   </section>
 
@@ -678,6 +687,7 @@
         <div class="card">
           <h2>公网 API Gateway <span class="hint">默认关闭</span></h2>
           <label class="inline"><input type="checkbox" id="gw-enabled" /> 启用本机 Gateway</label>
+          <label class="inline"><input type="checkbox" id="gw-store-content" /> 本机记录提示词和生成内容</label>
           <div style="display:grid;gap:9px;margin-top:12px">
             <label class="inline">公网 Base URL <input id="gw-public" type="url" placeholder="https://api.example.com" style="flex:1;min-width:0" /></label>
             <div class="btnrow">
@@ -1544,6 +1554,8 @@ async function loadLogs(force){
 function renderGateway(data){
   S.gateway = data;
   const g = data.gateway, today = data.today || {};
+  $("gateway-audit-note").textContent = "FRP 只转发 Gateway，不要直接转发引擎 8080。本机 Gateway 只监听 127.0.0.1；公网 HTTPS 由云服务器提供。"
+    + (g.store_content ? "本机记录提示词和生成内容；不保存 API Key。" : "审计不保存 API Key、提示词或生成内容。");
   const state = $("gateway-state");
   state.innerHTML = '<i class="dot ' + (g.running ? "ok" : "err") + '"></i><span>'
     + (g.running ? "运行中" : (g.enabled ? "启动失败" : "未启用")) + "</span>";
@@ -1584,7 +1596,7 @@ function renderGateway(data){
     + esc(k.name) + (k.enabled ? "" : "（已停用）") + "</option>").join("");
   const names = Object.fromEntries((data.keys || []).map(k => [k.id, k.name]));
   const items = data.recent || [];
-  $("gateway-audit-table").innerHTML = '<tr><th>时间</th><th>API Key</th><th>路由</th><th>状态</th><th>耗时</th><th>tokens</th></tr>'
+  $("gateway-audit-table").innerHTML = '<tr><th>时间</th><th>API Key</th><th>路由</th><th>状态</th><th>耗时</th><th>tokens</th><th>内容</th></tr>'
     + (items.length ? items.map(it => {
       const ok = it.status >= 200 && it.status < 400;
       const keyName = it.key_name && it.key_name !== "—" ? it.key_name : (names[it.key_id] || it.key_id);
@@ -1593,14 +1605,30 @@ function renderGateway(data){
         + '<td class="mono" title="' + esc(it.model || "") + '">' + esc(it.route) + (it.stream ? " · SSE" : "")
         + '</td><td class="' + (ok ? "okc" : "errc") + '" title="' + esc(it.error || "") + '">' + it.status
         + '</td><td>' + nf(it.ms) + ' ms</td><td>' + compact(it.total_tokens)
-        + '<div class="mute">' + cny(it.cost_cny || 0) + ' / ' + usd(it.cost_usd || 0) + '</div></td></tr>';
-    }).join("") : '<tr><td colspan="6" class="note">还没有请求</td></tr>');
+        + '<div class="mute">' + cny(it.cost_cny || 0) + ' / ' + usd(it.cost_usd || 0) + '</div></td>'
+        + '<td>' + (g.store_content && it.route !== "/v1/models" ? '<button class="mini" onclick="viewGatewayContent(\'' + it.id + '\')">查看</button>' : "—") + '</td></tr>';
+    }).join("") : '<tr><td colspan="7" class="note">还没有请求</td></tr>');
 }
 async function loadGateway(){
   try {
     const selected = S.auditKey || "";
     renderGateway(await api("/api/gateway" + (selected ? "?key_id=" + encodeURIComponent(selected) : "")));
   } catch { $("gateway-state").innerHTML = '<i class="dot err"></i><span>读取失败</span>'; }
+}
+function auditPretty(text){
+  if (!text) return "（空）";
+  try { return JSON.stringify(JSON.parse(text), null, 2); } catch { return text; }
+}
+async function viewGatewayContent(id){
+  try {
+    const data = await api("/api/gateway/content?id=" + encodeURIComponent(id));
+    $("audit-content-card").style.display = "block";
+    $("audit-content-meta").textContent = (data.key_name || "—") + " · " + (data.model || "—") + " · HTTP " + data.status;
+    $("audit-request").textContent = auditPretty(data.request);
+    $("audit-response").textContent = data.response || "（空）";
+    $("audit-reasoning").textContent = data.reasoning || "（空）";
+    $("audit-content-card").scrollIntoView({ behavior:"smooth", block:"start" });
+  } catch (e){ toast(e.message, true); }
 }
 function renderFrp(data){
   const f = data.frp;
@@ -1644,6 +1672,7 @@ function setAuditKey(id){
 }
 function fillGatewaySettings(g){
   $("gw-enabled").checked = !!g.enabled;
+  $("gw-store-content").checked = !!g.store_content;
   $("gw-public").value = g.public_url || "";
   $("gw-port").value = g.port;
   $("gw-rate").value = g.rate_per_min;
@@ -1656,6 +1685,7 @@ async function saveGateway(){
   try {
     const r = await api("/api/gateway", { method:"POST", body:JSON.stringify({
       enabled:$("gw-enabled").checked,
+      store_content:$("gw-store-content").checked,
       public_url:$("gw-public").value.trim(),
       port:parseInt($("gw-port").value, 10),
       rate_per_min:parseInt($("gw-rate").value, 10),

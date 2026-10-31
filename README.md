@@ -136,9 +136,10 @@ Gateway 跟随 StrataLab 进程运行：退出 StrataLab 后，公网 API 也不
 
 「公网」页显示今日/累计请求、token、拒绝数、活动与排队请求，以及最近 100 条审计记录。可以按 API Key 筛选记录和今日统计；每条记录只有时间、Key 名称与 ID、路由、模型、状态码、耗时、输入/缓存/输出 token、DeepSeek 峰价下的人民币与美元成本，以及错误类别：
 
-- 不记录完整 API Key，不保存提示词、消息或生成内容。
-- 审计写入 `gateway-audit.jsonl`，超过 8 MiB 时轮转为一个 `.jsonl.1` 备份。
-- 「清空审计与用量」会同时清空审计文件和全部计数，且不可撤销。
+- 不记录完整 API Key。默认不保存提示词、消息或生成内容；在设置页开启“本机记录提示词和生成内容”后，才会按请求 ID 保存这些内容。
+- 元数据审计写入 `gateway-audit.jsonl`，超过 8 MiB 时轮转为一个 `.jsonl.1` 备份。
+- 可选内容审计写入 `gateway-content.jsonl`，包含提示词、生成内容和 reasoning；图片 Base64 省略，单段文本默认最多 20000 字符。仅本机管理页可读取，公网 Gateway 不提供该接口。
+- 「清空审计与用量」会同时清空元数据、内容记录和全部计数，且不可撤销。
 
 ## 内置终端
 
@@ -209,6 +210,7 @@ strata serve: prompt 24 tokens = 17 reused + 7 read in 269 ms (26.0 tok/s),
 | `gateway.json` | 可选 Gateway 配置、多个命名 Key 的哈希、独立额度与启停状态；不含完整 API Key |
 | `gateway-state.json` | 全局及每个 Key 的每日和累计请求/token 计数，重启后保留 |
 | `gateway-audit.jsonl` | 不含消息内容的审计元数据，超过 8 MiB 轮转 |
+| `gateway-content.jsonl` | 可选的提示词、生成内容和 reasoning 审计；图片 Base64 省略 |
 | `logs/launch-<id>-<ts>.log` | 每次 `strata.cmd launch` 的原始输出 |
 | `logs/ui.log` | 控制台自己的生命周期（启动 / 窗口出现 / 关窗退出），排查"为什么没了"看这里 |
 | `logs/window.log` | 每次开窗的记录（用哪个浏览器、URL、尺寸） |
@@ -223,6 +225,7 @@ strata serve: prompt 24 tokens = 17 reused + 7 read in 269 ms (26.0 tok/s),
 | GET | `/api/status` | health、VRAM、RAM、profiles、任务、stale 标记、引擎指标 |
 | GET | `/api/stats` | 服务计数（`run` 本次运行 / `all` 该日志全部）+ 专家缓存命中 + 上一条请求 |
 | GET/POST | `/api/gateway` | 读取监控 / 更新可选 Gateway 配置；GET 支持 `?key_id=` 筛选 |
+| GET | `/api/gateway/content?id=` | 按审计 ID 查看可选提示词和生成内容，仅本机管理接口 |
 | POST | `/api/gateway/key` | 注册命名 API Key 和独立额度；完整 Key 仅本次返回 |
 | POST | `/api/gateway/key/update` | 修改名称和独立额度 |
 | POST | `/api/gateway/key/delete` | 永久删除 Key，保留历史审计 |

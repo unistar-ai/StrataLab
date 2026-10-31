@@ -7,6 +7,7 @@ Zero dependency (stdlib only), binds 127.0.0.1. Backend for ui.html.
   GET  /api/stats            serving counters parsed from the engine log
                              (this engine run / every run in that log)
   GET  /api/gateway          public API gateway config, counters and audit metadata
+  GET  /api/gateway/content  optional request/response content by audit ID
   POST /api/gateway          update optional gateway configuration
   POST /api/gateway/key      register a named API key (returned once, stored hashed)
   POST /api/gateway/key/update  rename, change quota, enable or disable a key
@@ -1620,6 +1621,12 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/gateway":
             return self.reply(GATEWAY.monitor(params.get("key_id") or None))
+
+        if path == "/api/gateway/content":
+            content = GATEWAY.content(params.get("id") or "")
+            if content is None:
+                return self.reply({"error": "content not found"}, 404)
+            return self.reply(content)
 
         if path == "/api/frp":
             return self.reply({"frp": FRPC.public(), "logs": FRPC.logs()})

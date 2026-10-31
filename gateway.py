@@ -30,6 +30,8 @@ DEFAULT_CONFIG = {
     "short_queue_tokens": 262144,
     "long_queue_tokens": 1048576,
     "long_context_threshold": 32768,
+    "store_content": False,
+    "content_max_chars": 20000,
     "queue_timeout_s": 30,
     "upstream_timeout_s": 1800,
 }
@@ -42,6 +44,7 @@ LIMITS = {
     "short_queue_tokens": (1024, 268435456),
     "long_queue_tokens": (1024, 268435456),
     "long_context_threshold": (1024, 1048576),
+    "content_max_chars": (1000, 100000),
     "queue_timeout_s": (1, 300),
     "upstream_timeout_s": (30, 86400),
 }
@@ -92,6 +95,8 @@ def validate_config(data):
             cfg[key] = value
     if not isinstance(cfg["enabled"], bool):
         raise ValueError("enabled 必须是布尔值")
+    if not isinstance(cfg["store_content"], bool):
+        raise ValueError("store_content 必须是布尔值")
     for key, (low, high) in LIMITS.items():
         value = cfg[key]
         if isinstance(value, bool) or not isinstance(value, int) or not low <= value <= high:
@@ -182,6 +187,47 @@ def estimate_context_tokens(data):
     return max(1, (state["bytes"] + 2) // 3) + state["images"] * 2048 + 32 + output
 
 
+def sanitize_request(data, max_chars):
+    if not isinstance(data, dict):
+        return ""
+
+    def clean(value):
+        if isinstance(value, dict):
+            kind = str(value.get("type") or value.get("kind") or "").lower()
+            if kind in ("image", "image_url", "input_image"):
+                return {"type": kind, "source": "[图片内容省略]"}
+            return {key: clean(child) for key, child in value.items()}
+        if isinstance(value, list):
+            return [clean(child) for child in value]
+        if isinstance(value, str) and value.startswith("data:image/"):
+            return "[图片 Base64 省略]"
+        return value
+
+    request = {key: clean(data[key]) for key in ("system", "messages", "tools") if key in data}
+    return json.dumps(request, ensure_ascii=False)[:max_chars]
+
+
+def append_response(content, chunk, path, max_chars):
+    if not isinstance(chunk, dict):
+        return
+    choices = chunk.get("choices") or []
+    for choice in choices:
+        message = choice.get("message") or choice.get("delta") or {}
+        content["response"] += message.get("content") or ""
+        content["reasoning"] += message.get("reasoning_content") or ""
+    if path == "/v1/messages":
+        message = chunk.get("message") or chunk
+        for part in message.get("content") or []:
+            if isinstance(part, dict):
+                content["response"] += part.get("text") or ""
+                content["reasoning"] += part.get("thinking") or ""
+        delta = chunk.get("delta") or {}
+        content["response"] += delta.get("text") or ""
+        content["reasoning"] += delta.get("thinking") or ""
+    content["response"] = content["response"][:max_chars]
+    content["reasoning"] = content["reasoning"][:max_chars]
+
+
 class Reject(Exception):
     def __init__(self, status, message, retry_after=None):
         super().__init__(message)
@@ -207,6 +253,7 @@ class GatewayService:
         self.config_file = self.app_dir / "gateway.json"
         self.state_file = self.app_dir / "gateway-state.json"
         self.audit_file = self.app_dir / "gateway-audit.jsonl"
+        self.content_file = self.app_dir / "gateway-content.jsonl"
         self.lock = threading.RLock()
         self.condition = threading.Condition(self.lock)
         self.queue = {}
@@ -223,6 +270,7 @@ class GatewayService:
         self.config = self._load_config()
         self.state = self._load_state()
         self.recent = deque(self._read_audit(), maxlen=500)
+        self.content_recent = deque(self._read_content(), maxlen=200)
         if self.config["keys"] and not self.state["key_days"]:
             today = self.state["days"].get(self._day())
             if today:
@@ -273,6 +321,30 @@ class GatewayService:
             except OSError:
                 pass
         return rows[-500:]
+
+    def _read_content(self):
+        rows = []
+        try:
+            for line in self.content_file.read_text(encoding="utf-8").splitlines():
+                try:
+                    row = json.loads(line)
+                    if isinstance(row, dict) and row.get("id"):
+                        rows.append(row)
+                except json.JSONDecodeError:
+                    pass
+        except OSError:
+            pass
+        return rows[-200:]
+
+    def content(self, request_id):
+        with self.lock:
+            for row in reversed(self.content_recent):
+                if row["id"] == request_id:
+                    return row
+        for row in reversed(self._read_content()):
+            if row["id"] == request_id:
+                return row
+        return None
 
     @staticmethod
     def _day():
@@ -543,7 +615,7 @@ class GatewayService:
         except Exception as exc:
             raise Reject(503, f"模型加载失败：{str(exc)[:300]}")
 
-    def _record(self, row):
+    def _record(self, row, content=None):
         with self.lock:
             self.recent.append(row)
             day_name = self._day()
@@ -571,6 +643,17 @@ class GatewayService:
                 key_day["cost_usd"] = float(key_day.get("cost_usd", 0)) + float(row.get("cost_usd") or 0)
                 for old in sorted(key_days)[:-62]:
                     key_days.pop(old, None)
+            if content and self.config["store_content"]:
+                record = dict(content)
+                record.update({"id": row["id"], "ts": row["ts"], "key_id": row["key_id"],
+                               "key_name": row["key_name"], "model": row["model"],
+                               "status": row["status"]})
+                self.content_recent.append(record)
+                try:
+                    with self.content_file.open("a", encoding="utf-8") as fh:
+                        fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+                except OSError:
+                    pass
             try:
                 self._save_json(self.state_file, self.state)
                 if self.audit_file.exists() and self.audit_file.stat().st_size > 8 * 1024 * 1024:
@@ -597,15 +680,17 @@ class GatewayService:
                 "total_requests": self.state.get("total_requests", 0),
                 "total_tokens": self.state.get("total_tokens", 0),
                 "recent": list(reversed(rows))[:100],
-                "audit": "仅元数据；不保存 API Key、提示词或生成内容",
+                "audit": ("本机记录提示词和生成内容；不保存 API Key" if self.config["store_content"]
+                          else "仅元数据；不保存 API Key、提示词或生成内容"),
             }
 
     def clear_audit(self):
         with self.lock:
             self.recent.clear()
+            self.content_recent.clear()
             self.state = {"total_requests": 0, "total_tokens": 0, "days": {}, "key_days": {}}
             self._save_json(self.state_file, self.state)
-            for path in (self.audit_file, self.audit_file.with_suffix(".jsonl.1")):
+            for path in (self.audit_file, self.audit_file.with_suffix(".jsonl.1"), self.content_file):
                 try:
                     path.unlink()
                 except FileNotFoundError:
@@ -684,7 +769,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
         if isinstance(message, dict):
             GatewayHandler._usage(usage, {"usage": message.get("usage")})
 
-    def _forward(self, method, path, data, stream, usage):
+    def _forward(self, method, path, data, stream, usage, content):
         cfg = self.gateway.config
         body = json.dumps(data, ensure_ascii=False).encode("utf-8") if data is not None else None
         headers = {
@@ -716,7 +801,9 @@ class GatewayHandler(BaseHTTPRequestHandler):
             if not stream:
                 self.wfile.write(payload)
                 try:
-                    self._usage(usage, json.loads(payload.decode("utf-8")))
+                    parsed = json.loads(payload.decode("utf-8"))
+                    self._usage(usage, parsed)
+                    append_response(content, parsed, path, cfg["content_max_chars"])
                 except (UnicodeDecodeError, json.JSONDecodeError):
                     pass
             else:
@@ -727,6 +814,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
                         try:
                             chunk = json.loads(raw[5:].strip().decode("utf-8"))
                             self._usage(usage, chunk)
+                            append_response(content, chunk, path, cfg["content_max_chars"])
                         except (UnicodeDecodeError, json.JSONDecodeError):
                             pass
             return response.status
@@ -754,6 +842,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
         model = ""
         stream = False
         usage = {}
+        content = {"request": "", "response": "", "reasoning": ""}
         status = 500
         self.response_started = False
         error = ""
@@ -780,6 +869,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
                     gateway._leave_queue()
             if self.command == "POST":
                 data = self._read_json()
+                content["request"] = sanitize_request(data, gateway.config["content_max_chars"])
                 model = data.get("model") or ""
                 if not isinstance(model, str) or not model or len(model) > 200:
                     raise Reject(400, "model 必填")
@@ -803,7 +893,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 gateway._check_quota(key_id)
                 if self.command == "POST":
                     gateway.ensure_model(model)
-                status = self._forward(self.command, path, data, stream, usage)
+                status = self._forward(self.command, path, data, stream, usage, content)
             finally:
                 gateway._leave_queue()
         except Reject as exc:
@@ -858,4 +948,4 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 "cost_usd": cost_usd,
                 "stream": stream,
                 "error": error,
-            })
+            }, content)

@@ -13,6 +13,7 @@ gateway.json
 gateway-state.json
 gateway-audit.jsonl
 gateway-audit.jsonl.1
+gateway-content.jsonl
 *.log
 *.tmp
 
