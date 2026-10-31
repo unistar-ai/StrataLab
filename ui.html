@@ -256,6 +256,23 @@
   #term-pane .xterm{height:100%}
   #term-pane .xterm-viewport{background:transparent !important}
 
+  /* ------------------------------------------------------------------ audit modal */
+  .modal-backdrop{
+    position:fixed; inset:0; z-index:100; display:none; align-items:center; justify-content:center;
+    padding:24px; background:rgba(0,0,0,.58); backdrop-filter:blur(4px);
+  }
+  .modal-backdrop .modal-card{
+    width:min(1100px,96vw); max-height:90vh; overflow:auto; position:relative;
+    box-shadow:0 20px 70px rgba(0,0,0,.45);
+  }
+  .modal-backdrop .modal-card h2{padding-right:38px}
+  .modal-close{
+    position:absolute; top:10px; right:10px; width:30px; height:30px; display:grid; place-items:center;
+    border:1px solid var(--line); border-radius:8px; background:var(--panel2); color:var(--dim);
+    font:18px/1 var(--sans); cursor:pointer;
+  }
+  .modal-close:hover{color:var(--txt); border-color:var(--line2)}
+
   /* ------------------------------------------------------------------ banner / toast */
   .banner{display:none; gap:10px; align-items:flex-start; font-size:12.5px; border-radius:12px; padding:11px 14px; line-height:1.6}
   .banner.show{display:flex}
@@ -598,14 +615,17 @@
       </div>
       <div style="overflow:auto"><table id="gateway-audit-table"></table></div>
     </div>
-    <div class="card" id="audit-content-card" style="display:none">
-      <h2>请求内容 <span class="hint" id="audit-content-meta"></span></h2>
-      <div class="eyebrow">提示词与工具</div>
-      <pre class="logbox" id="audit-request" style="flex:initial;min-height:0;max-height:320px"></pre>
-      <div class="eyebrow" style="margin-top:12px">生成内容</div>
-      <pre class="logbox" id="audit-response" style="flex:initial;min-height:0;max-height:320px"></pre>
-      <div class="eyebrow" style="margin-top:12px">思考过程</div>
-      <pre class="logbox" id="audit-reasoning" style="flex:initial;min-height:0;max-height:320px"></pre>
+    <div class="modal-backdrop" id="audit-content-modal" onclick="closeAuditContent(event)">
+      <div class="card modal-card" role="dialog" aria-modal="true" aria-label="请求内容">
+        <button class="modal-close" aria-label="关闭" onclick="closeAuditContent()">×</button>
+        <h2>请求内容 <span class="hint" id="audit-content-meta"></span></h2>
+        <div class="eyebrow">提示词与工具</div>
+        <pre class="logbox" id="audit-request" style="flex:initial;min-height:0;max-height:320px"></pre>
+        <div class="eyebrow" style="margin-top:12px">生成内容</div>
+        <pre class="logbox" id="audit-response" style="flex:initial;min-height:0;max-height:320px"></pre>
+        <div class="eyebrow" style="margin-top:12px">思考过程</div>
+        <pre class="logbox" id="audit-reasoning" style="flex:initial;min-height:0;max-height:320px"></pre>
+      </div>
     </div>
   </section>
 
@@ -1623,14 +1643,20 @@ function auditPretty(text){
 async function viewGatewayContent(id){
   try {
     const data = await api("/api/gateway/content?id=" + encodeURIComponent(id));
-    $("audit-content-card").style.display = "block";
+    $("audit-content-modal").style.display = "flex";
     $("audit-content-meta").textContent = (data.key_name || "—") + " · " + (data.model || "—") + " · HTTP " + data.status;
     $("audit-request").textContent = auditPretty(data.request);
     $("audit-response").textContent = data.response || "（空）";
     $("audit-reasoning").textContent = data.reasoning || "（空）";
-    $("audit-content-card").scrollIntoView({ behavior:"smooth", block:"start" });
   } catch (e){ toast(e.message, true); }
 }
+function closeAuditContent(event){
+  if (event && event.target !== $("audit-content-modal")) return;
+  $("audit-content-modal").style.display = "none";
+}
+document.addEventListener("keydown", event => {
+  if (event.key === "Escape" && $("audit-content-modal").style.display !== "none") closeAuditContent();
+});
 function renderFrp(data){
   const f = data.frp;
   S.frp = f;
