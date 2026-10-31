@@ -749,6 +749,17 @@ class GatewayHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
         self.close_connection = True
 
+    def _empty(self, status):
+        self.send_response_only(status)
+        if status != 204:
+            self.send_header("Content-Length", "0")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Connection", "close")
+        self.end_headers()
+        self.response_started = True
+        self.close_connection = True
+        return status
+
     def _read_json(self):
         if self.headers.get("Transfer-Encoding"):
             raise Reject(400, "不支持 Transfer-Encoding")
@@ -871,6 +882,8 @@ class GatewayHandler(BaseHTTPRequestHandler):
         error = ""
         path = self.path.partition("?")[0]
         try:
+            if self.command == "GET" and path in ("/", "/favicon.ico"):
+                return self._empty(204 if path == "/favicon.ico" else 200)
             if self.command == "GET" and path == "/v1/models":
                 pass
             elif self.command == "POST" and path in ("/v1/chat/completions", "/v1/messages"):
