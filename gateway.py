@@ -929,6 +929,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
         model = ""
         requested_model = ""
         stream = False
+        context_tokens = 0
         usage = {}
         content = {"request": "", "response": "", "reasoning": ""}
         status = 500
@@ -952,7 +953,8 @@ class GatewayHandler(BaseHTTPRequestHandler):
             data = None
             if self.command == "GET" and gateway.models is not None:
                 gateway._check_quota(key_id)
-                gateway._enter_queue(gateway.context_tokens(data, path))
+                context_tokens = gateway.context_tokens(data, path)
+                gateway._enter_queue(context_tokens)
                 try:
                     status = self._send_models(gateway.models())
                     return status
@@ -983,7 +985,8 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 if "stream" in data and not isinstance(data["stream"], bool):
                     raise Reject(400, "stream 必须是布尔值")
                 stream = bool(data.get("stream"))
-            gateway._enter_queue(gateway.context_tokens(data, path))
+            context_tokens = gateway.context_tokens(data, path)
+            gateway._enter_queue(context_tokens)
             try:
                 gateway._check_quota(key_id)
                 if self.command == "POST":
@@ -1037,6 +1040,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 "low_resource": bool(requested_model and gateway.config["low_resource"]),
                 "status": status,
                 "ms": round((time.monotonic() - started) * 1000),
+                "context_tokens": context_tokens,
                 "prompt_tokens": prompt,
                 "completion_tokens": completion,
                 "cached_tokens": cached,

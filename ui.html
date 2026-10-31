@@ -1670,7 +1670,8 @@ function renderGateway(data){
         + (it.low_resource ? " · 低占用" : "")
         + '</td><td class="' + (ok ? "okc" : "errc") + '" title="' + esc(it.error || "") + '">' + it.status
         + '</td><td>' + nf(it.ms) + ' ms</td><td>' + compact(it.total_tokens)
-        + '<div class="mute">' + cny(it.cost_cny || 0) + ' / ' + usd(it.cost_usd || 0) + '</div></td>'
+        + '<div class="mute">' + (it.context_tokens ? "ctx " + compact(it.context_tokens) + " · " : "")
+        + cny(it.cost_cny || 0) + ' / ' + usd(it.cost_usd || 0) + '</div></td>'
         + '<td>' + (g.store_content && it.route !== "/v1/models" ? '<button class="mini" onclick="viewGatewayContent(\'' + it.id + '\')">查看</button>' : "—") + '</td></tr>';
     }).join("") : '<tr><td colspan="7" class="note">还没有请求</td></tr>');
 }
