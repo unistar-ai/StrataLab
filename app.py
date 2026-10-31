@@ -173,9 +173,10 @@ DEFAULT_PROFILES = {
         "path": str(MODELS_ROOT / "qwen36-UD-Q4_K_XL"),
         "served_id": "qwen3.6-35b-a3b-ud-q4_k_xl-perf64p2",
         "engine_id": "qwen3.6-35b-a3b-ud-q4_k_xl",
-        "ctx": 65536, "kv": "", "vision": "cpu", "parallel": 2, "extra": [],
-        "desc": "64K 高性能双槽位。专家显存自动分配，两个请求可同时解码；每个槽位有独立 KV 和会话状态。",
-        "speed": "22.9 GB 权重 · 64K · 2 并发 · 专家显存自动",
+        "ctx": 65536, "kv": "", "vision": "cpu", "parallel": 2,
+        "extra": ["--set", "batch-mtp=1"],
+        "desc": "64K 高性能双槽位。专家显存自动分配，两个请求可同时解码；每个槽位有独立 KV、会话状态和 MTP 草稿。",
+        "speed": "22.9 GB 权重 · 64K · 2 并发 · batch MTP",
         "shard": ["Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf", 22853663008],
         "repo": "unsloth/Qwen3.6-35B-A3B-MTP-GGUF",
         "download_url": ("https://modelscope.cn/models/unsloth/Qwen3.6-35B-A3B-MTP-GGUF/"
