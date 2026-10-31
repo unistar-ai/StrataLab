@@ -336,7 +336,7 @@
 
     <div class="card">
       <h2>游戏低占用模式 <span class="hint" id="mode-state">读取中…</span></h2>
-      <div class="muted">所有 Gateway 请求固定路由到 Qwen3.6-35B-A3B Q4，32K 上下文、最多 8K 输出，为游戏预留 8 GiB 显存。切换会等待已接收请求完成。</div>
+      <div class="muted">所有 Gateway 请求固定路由到 Qwen3.6-35B-A3B Q4，64K 上下文、最多 32K 输出，为游戏预留 8 GiB 显存。切换会等待已接收请求完成。</div>
       <div class="btnrow" style="margin-top:12px">
         <button class="primary" id="mode-toggle" onclick="toggleLowResource()">进入低占用模式</button>
       </div>
@@ -1586,7 +1586,7 @@ function renderLowResource(g){
   const changing = !!g.mode_changing || !!S.modeChanging;
   const game = S.status && (S.status.profiles || []).find(p => p.id === "game");
   $("mode-state").textContent = changing ? "正在等待请求并切换模型…"
-    : (enabled ? "已启用 · 35B-A3B Q4 · 32K" : "未启用");
+    : (enabled ? "已启用 · 35B-A3B Q4 · " + Math.round((g.low_resource_context_tokens || 65536)/1024) + "K" : "未启用");
   const button = $("mode-toggle");
   button.textContent = enabled ? "退出低占用模式" : (game && !game.ready ? "模型未就绪" : "进入低占用模式");
   button.disabled = changing || (!enabled && game && !game.ready);

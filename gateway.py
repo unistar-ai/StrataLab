@@ -37,8 +37,8 @@ DEFAULT_CONFIG = {
     "low_resource": False,
     "low_resource_model": "",
     "low_resource_return_model": "",
-    "low_resource_max_tokens": 8192,
-    "low_resource_context_tokens": 32768,
+    "low_resource_max_tokens": 32768,
+    "low_resource_context_tokens": 65536,
 }
 
 LIMITS = {
