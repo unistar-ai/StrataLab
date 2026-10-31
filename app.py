@@ -1739,7 +1739,8 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 key, public = GATEWAY.generate_key(
                     data.get("name"), data["daily_tokens"] if "daily_tokens" in data else Ellipsis,
-                    data["daily_money"] if "daily_money" in data else Ellipsis)
+                    data["daily_money"] if "daily_money" in data else Ellipsis,
+                    data.get("disable_thinking", False))
                 return self.reply({"ok": True, "key": key, "gateway": public})
             except (ValueError, OSError) as exc:
                 return self.reply({"ok": False, "error": str(exc)}, 400)

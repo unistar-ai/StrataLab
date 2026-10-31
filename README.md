@@ -120,6 +120,7 @@ Gateway 跟随 StrataLab 进程运行：退出 StrataLab 后，公网 API 也不
 ### 内置保护
 
 - `Authorization: Bearer <Key>` 或 `X-API-Key` 鉴权；支持多个命名 Key，永久删除后立即失效，历史审计保留。
+- 每个 Key 可单独设置“禁用思考”。启用后 Gateway 强制覆盖客户端思考参数：OpenAI 使用 `reasoning_effort: "none"`，Anthropic 使用 `thinking: {"type": "disabled"}`；其他 Key 不受影响。
 - 每个 Key 有独立每日额度。界面可选择“无限”、M tokens、人民币或美元；API 中 token 额度的 `null` 表示不限，数字 `0` 表示真实零额度。金额使用 `daily_money: {currency: CNY|USD, amount}`，`null` 表示不限，任一额度达到即拒绝请求。旧配置中代表不限的 `0` 会自动迁移为 `null`；所有额度均在“密钥”页按 Key 独立管理。
 - 金额按 DeepSeek Flash 官方峰值价计算：美元输入缓存命中 $0.006/M、未命中 $0.3/M、输出 $1.2/M；人民币分别为 0.04 元/M、2 元/M、8 元/M。两种货币分别按官方报价计算，不做汇率换算。
 - 只允许 `GET /v1/models`、`POST /v1/chat/completions`、`POST /v1/messages`，不代理管理 API、终端或任意路径。

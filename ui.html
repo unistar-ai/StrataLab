@@ -635,6 +635,7 @@
           <input id="key-daily-value" type="number" min="0" max="1000000" step="0.0001" value="1" style="width:110px" />
           <span id="key-daily-unit">M tokens</span>
         </span>
+        <label class="inline"><input type="checkbox" id="key-disable-thinking" /> 禁用思考</label>
         <button class="primary" onclick="createKey()">注册 API Key</button>
       </div>
       <div class="mute" style="margin-top:8px">tokens 以 M（百万）为单位；金额按 DeepSeek 官方峰值价计算，0 表示真实零额度。</div>
@@ -1707,7 +1708,7 @@ async function loadKeys(){
   } catch (e){ toast(e.message, true); }
 }
 function renderKeyTable(keys){
-  $("key-table").innerHTML = '<tr><th>名称</th><th>Key ID</th><th>今日用量</th><th>每日额度</th><th>状态</th><th>操作</th></tr>'
+  $("key-table").innerHTML = '<tr><th>名称</th><th>Key ID</th><th>今日用量</th><th>每日额度</th><th>思考</th><th>状态</th><th>操作</th></tr>'
     + (keys.length ? keys.map(k => {
       const mode = k.daily_money ? k.daily_money.currency : (k.daily_tokens === null ? "unlimited" : "tokens");
       const value = k.daily_money ? k.daily_money.amount : (k.daily_tokens === null ? 0 : k.daily_tokens / 1000000);
@@ -1722,12 +1723,14 @@ function renderKeyTable(keys){
         + '<input class="key-edit-daily-m" data-id="' + k.id + '" type="number" min="0" max="1000000" step="0.0001" value="'
         + value + '" ' + (mode === "unlimited" ? "disabled" : "") + ' style="width:90px;'
         + (mode === "unlimited" ? "display:none" : "") + '" />'
-        + '<span class="mute key-edit-unit" data-id="' + k.id + '">' + unit + '</span></div></td><td class="'
+        + '<span class="mute key-edit-unit" data-id="' + k.id + '">' + unit + '</span></div></td>'
+        + '<td><label class="inline"><input type="checkbox" class="key-disable-thinking" data-id="' + k.id + '" '
+        + (k.disable_thinking ? "checked" : "") + ' /> 禁用</label></td><td class="'
         + (k.enabled ? "okc" : "errc") + '">' + (k.enabled ? "有效" : "已停用") + '</td><td><div class="btnrow">'
         + '<button class="mini" onclick="saveKey(\'' + k.id + '\')">保存</button>'
         + '<button class="mini danger" onclick="deleteKey(\'' + k.id + '\')">删除</button>'
         + '</div></td></tr>';
-    }).join("") : '<tr><td colspan="6" class="note">还没有 API Key</td></tr>');
+    }).join("") : '<tr><td colspan="7" class="note">还没有 API Key</td></tr>');
 }
 function keyQuotaMode(){
   const mode = $("key-quota-mode").value;
@@ -1763,7 +1766,8 @@ async function createKey(){
   try {
     const quota = quotaPayload($("key-quota-mode").value, $("key-daily-value").value);
     const r = await api("/api/gateway/key", { method:"POST", body:JSON.stringify({
-      name:name, daily_tokens:quota.daily_tokens, daily_money:quota.daily_money
+      name:name, daily_tokens:quota.daily_tokens, daily_money:quota.daily_money,
+      disable_thinking:$("key-disable-thinking").checked
     }) });
     $("key-created").innerHTML = '<div class="row"><span class="label">完整 Key</span><code>' + esc(r.key)
       + '</code><button class="copy" data-copy="' + esc(r.key)
@@ -1780,7 +1784,8 @@ async function saveKey(id){
     await api("/api/gateway/key/update", { method:"POST", body:JSON.stringify({
       id:id,
       name:document.querySelector('.key-edit-name[data-id="' + id + '"]').value.trim(),
-      daily_tokens:quota.daily_tokens, daily_money:quota.daily_money
+      daily_tokens:quota.daily_tokens, daily_money:quota.daily_money,
+      disable_thinking:document.querySelector('.key-disable-thinking[data-id="' + id + '"]').checked
     }) });
     toast("Key 已更新"); loadKeys();
   } catch (e){ toast(e.message, true); }

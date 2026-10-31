@@ -140,12 +140,15 @@ def validate_config(data):
         name, daily = validate_key(item.get("name"), item.get("daily_tokens"))
         if not isinstance(item.get("enabled"), bool):
             raise ValueError("Key enabled 必须是布尔值")
+        if not isinstance(item.get("disable_thinking", False), bool):
+            raise ValueError("disable_thinking 必须是布尔值")
         created = item.get("created_at")
         if created is not None and (isinstance(created, bool) or not isinstance(created, (int, float))):
             raise ValueError("Key created_at 无效")
         ids.add(key_id)
         keys.append({"id": key_id, "name": name, "hash": key_hash,
                      "daily_tokens": daily, "daily_money": validate_money(item.get("daily_money")),
+                     "disable_thinking": item.get("disable_thinking", False),
                      "enabled": item["enabled"], "created_at": created})
     cfg["keys"] = keys
     cfg["key_hash"] = ""
@@ -364,6 +367,7 @@ class GatewayService:
                 result.append({
                     "id": item["id"], "name": item["name"],
                     "daily_tokens": item["daily_tokens"], "daily_money": item["daily_money"],
+                    "disable_thinking": item["disable_thinking"],
                     "enabled": item["enabled"], "created_at": item["created_at"],
                     "today_tokens": int(day.get("tokens", 0)),
                     "today_requests": int(day.get("requests", 0)),
@@ -371,6 +375,17 @@ class GatewayService:
                     "today_cost_usd": float(day.get("cost_usd", 0)),
                 })
             return result
+
+    def apply_key_policy(self, key_id, data, path):
+        item = self._find_key(key_id)
+        if not item or not item["disable_thinking"] or not isinstance(data, dict):
+            return data
+        data = dict(data)
+        if path == "/v1/chat/completions":
+            data["reasoning_effort"] = "none"
+        elif path == "/v1/messages":
+            data["thinking"] = {"type": "disabled"}
+        return data
 
     def public(self):
         with self.lock:
@@ -434,12 +449,15 @@ class GatewayService:
             self.start()
         return self.public()
 
-    def generate_key(self, name=None, daily_tokens=Ellipsis, daily_money=Ellipsis):
+    def generate_key(self, name=None, daily_tokens=Ellipsis, daily_money=Ellipsis,
+                     disable_thinking=False):
         with self.lock:
             if daily_tokens is Ellipsis:
                 daily_tokens = self.config["daily_tokens"]
             if daily_money is Ellipsis:
                 daily_money = None
+            if not isinstance(disable_thinking, bool):
+                raise ValueError("disable_thinking 必须是布尔值")
             daily_money = validate_money(daily_money)
             name, daily_tokens = validate_key(name or f"API Key {len(self.config['keys']) + 1}",
                                               daily_tokens)
@@ -455,6 +473,7 @@ class GatewayService:
             self.config["keys"].append({
                 "id": key_id, "name": name, "hash": digest,
                 "daily_tokens": daily_tokens, "daily_money": daily_money,
+                "disable_thinking": disable_thinking,
                 "enabled": True, "created_at": time.time(),
             })
             self._save_json(self.config_file, self.config)
@@ -476,7 +495,11 @@ class GatewayService:
             enabled = data.get("enabled", item["enabled"])
             if not isinstance(enabled, bool):
                 raise ValueError("enabled 必须是布尔值")
-            item.update(name=name, daily_tokens=daily, daily_money=daily_money, enabled=enabled)
+            disable_thinking = data.get("disable_thinking", item["disable_thinking"])
+            if not isinstance(disable_thinking, bool):
+                raise ValueError("disable_thinking 必须是布尔值")
+            item.update(name=name, daily_tokens=daily, daily_money=daily_money,
+                        disable_thinking=disable_thinking, enabled=enabled)
             self._save_json(self.config_file, self.config)
             return self.keys_public()
 
@@ -869,6 +892,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
                     gateway._leave_queue()
             if self.command == "POST":
                 data = self._read_json()
+                data = gateway.apply_key_policy(key_id, data, path)
                 content["request"] = sanitize_request(data, gateway.config["content_max_chars"])
                 model = data.get("model") or ""
                 if not isinstance(model, str) or not model or len(model) > 200:
