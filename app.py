@@ -141,10 +141,26 @@ DEFAULT_PROFILES = {
         "token_model": "qwen36-ud-q4_k_xl",
         "path": str(MODELS_ROOT / "qwen36-UD-Q4_K_XL"),
         "served_id": "qwen3.6-35b-a3b-ud-q4_k_xl",
+        "engine_id": "qwen3.6-35b-a3b-ud-q4_k_xl",
         "ctx": 65536, "kv": "", "vision": "cpu", "parallel": 1,
         "extra": ["--set", "expert-vram=5.0"],
         "desc": "游戏低占用模式。35B 总参数、约 3B 激活，64K 上下文，CPU 视觉，单请求运行，预留 8 GiB 显存。",
         "speed": "22.9 GB 权重 · 资源占用远低于 Flash-Next",
+        "shard": ["Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf", 22853663008],
+        "repo": "unsloth/Qwen3.6-35B-A3B-MTP-GGUF",
+        "download_url": ("https://modelscope.cn/models/unsloth/Qwen3.6-35B-A3B-MTP-GGUF/"
+                         "resolve/master/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf"),
+    },
+    "perf64": {
+        "title": "35B-A3B 64K 高性能", "model_label": "Qwen3.6-35B-A3B · 64K 高性能",
+        "family": "qwen36", "model": "ud-q4_k_xl",
+        "token_model": "qwen36-ud-q4_k_xl",
+        "path": str(MODELS_ROOT / "qwen36-UD-Q4_K_XL"),
+        "served_id": "qwen3.6-35b-a3b-ud-q4_k_xl-perf64",
+        "engine_id": "qwen3.6-35b-a3b-ud-q4_k_xl",
+        "ctx": 65536, "kv": "", "vision": "cpu", "parallel": 1, "extra": [],
+        "desc": "64K 高性能模式。不使用固定专家显存预算，由引擎自动吃满可用显存，适合关闭游戏和 GPU 后台程序时使用。",
+        "speed": "22.9 GB 权重 · 64K · 专家显存自动",
         "shard": ["Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf", 22853663008],
         "repo": "unsloth/Qwen3.6-35B-A3B-MTP-GGUF",
         "download_url": ("https://modelscope.cn/models/unsloth/Qwen3.6-35B-A3B-MTP-GGUF/"
@@ -374,6 +390,46 @@ def clean_stale_markers():
     return removed
 
 
+def engine_model_id(profile):
+    return profile.get("engine_id", profile["served_id"])
+
+
+def profile_expert_vram(profile):
+    extra = list(profile.get("extra") or [])
+    for index, item in enumerate(extra[:-1]):
+        if item == "--set" and extra[index + 1].startswith("expert-vram="):
+            return float(extra[index + 1].split("=", 1)[1])
+    return None
+
+
+def runtime_expert_vram(profile):
+    config = ENGINE_LOGS / f"{profile['model']}-{int(profile.get('ctx', 262144)) // 1024}k.json"
+    try:
+        args = json.loads(config.read_text(encoding="utf-8-sig")).get("args") or []
+    except (OSError, ValueError, TypeError):
+        return None
+    for index, item in enumerate(args[:-1]):
+        if item == "--expert-vram":
+            try:
+                return float(args[index + 1])
+            except ValueError:
+                return None
+    return None
+
+
+def profile_matches_runtime(profile, current):
+    if not current or not current.get("loaded"):
+        return False
+    if engine_model_id(profile) != current.get("model"):
+        return False
+    if int(profile.get("ctx", 262144)) != int(current.get("max_context") or 0):
+        return False
+    desired = profile_expert_vram(profile)
+    actual = runtime_expert_vram(profile)
+    return (desired is None and actual is None) or (
+        desired is not None and actual is not None and abs(desired - actual) < 1e-6)
+
+
 def ready(pid):
     p = PROFILES[pid]
     name, size = p["shard"][0], int(p["shard"][1])
@@ -399,7 +455,7 @@ def current_log(h=None):
     h = h or health()
     if h and h.get("model"):
         for pid, p in PROFILES.items():
-            if p.get("served_id") == h["model"]:
+            if profile_matches_runtime(p, h):
                 f = engine_log_for(pid)
                 if f.exists():
                     return f
@@ -1238,14 +1294,18 @@ def read_history(n=30):
 def start_engine(pid, force=False):
     p = PROFILES[pid]
     h = health()
-    if h and h.get("model") == p.get("served_id"):
+    if profile_matches_runtime(p, h):
         job = new_job("start", profile=pid, title=p["title"])
         finish(job, "ready", "引擎已在运行")
         return job
     if h and not force:
-        job = new_job("start", profile=pid, title=p["title"])
-        finish(job, "failed", f"端口 8080 上已有别的模型（{h.get('model')}）；force 才会切换")
-        return job
+        if (engine_model_id(p) == h.get("model")
+                and int(p.get("ctx", 262144)) == int(h.get("max_context") or 0)):
+            force = True
+        else:
+            job = new_job("start", profile=pid, title=p["title"])
+            finish(job, "failed", f"端口 8080 上已有别的模型（{h.get('model')}）；force 才会切换")
+            return job
 
     cleaned = clean_stale_markers()
 
@@ -1314,7 +1374,6 @@ MODEL_SWITCH_LOCK = threading.Lock()
 
 def model_catalog():
     current = health()
-    current_id = (current or {}).get("model", "") if (current or {}).get("loaded") else ""
     items = []
     for pid, profile in PROFILES.items():
         if not ready(pid)[0]:
@@ -1327,7 +1386,7 @@ def model_catalog():
         items.append({
             "id": profile["served_id"], "object": "model", "created": created,
             "owned_by": "local",
-            "status": {"value": "loaded" if current_id == profile["served_id"] else "available"},
+            "status": {"value": "loaded" if profile_matches_runtime(profile, current) else "available"},
             "meta": {"n_ctx": int(profile.get("ctx", 262144))},
             "architecture": {"input_modalities": (["text"] if profile.get("vision") == "off"
                                                   else ["text", "image"]),
@@ -1338,21 +1397,20 @@ def model_catalog():
 
 def ensure_engine_model(served_id):
     with MODEL_SWITCH_LOCK:
-        current = health()
-        if current and current.get("loaded") and current.get("model") == served_id:
-            return served_id
         pid = next((key for key, profile in PROFILES.items()
                     if profile.get("served_id") == served_id), None)
         if pid is None:
             raise LookupError(served_id)
+        profile = PROFILES[pid]
+        if profile_matches_runtime(profile, health()):
+            return served_id
         if not ready(pid)[0]:
             raise RuntimeError("模型文件未就绪")
         job = start_engine(pid, force=True)
-        timeout_s = 930 if PROFILES[pid].get("family") == "qwen36" else 330
+        timeout_s = 930 if profile.get("family") == "qwen36" else 330
         deadline = time.time() + timeout_s
         while time.time() < deadline:
-            current = health()
-            if current and current.get("loaded") and current.get("model") == served_id:
+            if profile_matches_runtime(profile, health()):
                 return served_id
             if job["state"] in ("failed", "cancelled"):
                 raise RuntimeError(job.get("detail") or "模型加载失败")
@@ -1367,7 +1425,10 @@ def set_low_resource(enabled):
         return GATEWAY.public()
     low_model = PROFILES["game"]["served_id"]
     current = health() or {}
-    current_model = current.get("model", "") if current.get("loaded") else ""
+    current_profile = next((profile for profile in PROFILES.values()
+                            if profile_matches_runtime(profile, current)), None)
+    current_model = (current_profile["served_id"] if current_profile
+                     else current.get("model", "") if current.get("loaded") else "")
     if enabled:
         target = low_model
         return_model = (current_model if current_model and current_model != low_model
@@ -1661,7 +1722,7 @@ class Handler(BaseHTTPRequestHandler):
                                  "vision": p.get("vision"), "parallel": p.get("parallel"),
                                  "ready": ok, "have_bytes": have, "need_bytes": need,
                                  "repo_dir": p.get("repo_dir"),
-                                 "active": bool(h and h.get("model") == p.get("served_id"))})
+                                 "active": profile_matches_runtime(p, h)})
             return self.reply({"health": h, "vram": vram(), "ram_free_gb": ram_free_gb(),
                                "ram_total_gb": mem_stats()[1],
                                "page": {k: LAST_BEAT.get(k) for k in ("w", "h", "dpr", "sw", "sh")},
