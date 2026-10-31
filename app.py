@@ -141,27 +141,10 @@ DEFAULT_PROFILES = {
         "token_model": "qwen36-ud-q4_k_xl",
         "path": str(MODELS_ROOT / "qwen36-UD-Q4_K_XL"),
         "served_id": "qwen3.6-35b-a3b-ud-q4_k_xl",
-        "engine_id": "qwen3.6-35b-a3b-ud-q4_k_xl",
         "ctx": 65536, "kv": "", "vision": "cpu", "parallel": 1,
         "extra": ["--set", "expert-vram=5.0"],
         "desc": "游戏低占用模式。35B 总参数、约 3B 激活，64K 上下文，CPU 视觉，单请求运行，预留 8 GiB 显存。",
         "speed": "22.9 GB 权重 · 资源占用远低于 Flash-Next",
-        "shard": ["Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf", 22853663008],
-        "repo": "unsloth/Qwen3.6-35B-A3B-MTP-GGUF",
-        "download_url": ("https://modelscope.cn/models/unsloth/Qwen3.6-35B-A3B-MTP-GGUF/"
-                         "resolve/master/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf"),
-    },
-    "qwen36": {
-        "title": "35B-A3B Q4 128K", "model_label": "Qwen3.6-35B-A3B · Q4 128K",
-        "family": "qwen36", "model": "ud-q4_k_xl",
-        "token_model": "qwen36-ud-q4_k_xl",
-        "path": str(MODELS_ROOT / "qwen36-UD-Q4_K_XL"),
-        "served_id": "qwen3.6-35b-a3b-ud-q4_k_xl-128k",
-        "engine_id": "qwen3.6-35b-a3b-ud-q4_k_xl",
-        "ctx": 131072, "kv": "", "vision": "cpu", "parallel": 1,
-        "extra": ["--set", "expert-vram=0", "--set", "prefill=1024"],
-        "desc": "普通模式。128K 上下文，CPU 视觉，单请求运行，1024-token 预填块，专家全部驻留内存。",
-        "speed": "22.9 GB 权重 · 128K · 实测预填 ~797 tok/s",
         "shard": ["Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf", 22853663008],
         "repo": "unsloth/Qwen3.6-35B-A3B-MTP-GGUF",
         "download_url": ("https://modelscope.cn/models/unsloth/Qwen3.6-35B-A3B-MTP-GGUF/"
@@ -391,10 +374,6 @@ def clean_stale_markers():
     return removed
 
 
-def engine_model_id(profile):
-    return profile.get("engine_id", profile["served_id"])
-
-
 def ready(pid):
     p = PROFILES[pid]
     name, size = p["shard"][0], int(p["shard"][1])
@@ -420,8 +399,7 @@ def current_log(h=None):
     h = h or health()
     if h and h.get("model"):
         for pid, p in PROFILES.items():
-            if (engine_model_id(p) == h["model"]
-                    and int(p.get("ctx", 262144)) == int(h.get("max_context") or 0)):
+            if p.get("served_id") == h["model"]:
                 f = engine_log_for(pid)
                 if f.exists():
                     return f
@@ -1260,8 +1238,7 @@ def read_history(n=30):
 def start_engine(pid, force=False):
     p = PROFILES[pid]
     h = health()
-    if (h and h.get("model") == engine_model_id(p)
-            and int(h.get("max_context") or 0) == int(p.get("ctx", 262144))):
+    if h and h.get("model") == p.get("served_id"):
         job = new_job("start", profile=pid, title=p["title"])
         finish(job, "ready", "引擎已在运行")
         return job
@@ -1338,7 +1315,6 @@ MODEL_SWITCH_LOCK = threading.Lock()
 def model_catalog():
     current = health()
     current_id = (current or {}).get("model", "") if (current or {}).get("loaded") else ""
-    current_ctx = int((current or {}).get("max_context") or 0)
     items = []
     for pid, profile in PROFILES.items():
         if not ready(pid)[0]:
@@ -1348,12 +1324,10 @@ def model_catalog():
             created = int(shard.stat().st_mtime)
         except OSError:
             created = 0
-        active = (current_id == engine_model_id(profile)
-                  and current_ctx == int(profile.get("ctx", 262144)))
         items.append({
             "id": profile["served_id"], "object": "model", "created": created,
             "owned_by": "local",
-            "status": {"value": "loaded" if active else "available"},
+            "status": {"value": "loaded" if current_id == profile["served_id"] else "available"},
             "meta": {"n_ctx": int(profile.get("ctx", 262144))},
             "architecture": {"input_modalities": (["text"] if profile.get("vision") == "off"
                                                   else ["text", "image"]),
@@ -1364,26 +1338,21 @@ def model_catalog():
 
 def ensure_engine_model(served_id):
     with MODEL_SWITCH_LOCK:
+        current = health()
+        if current and current.get("loaded") and current.get("model") == served_id:
+            return served_id
         pid = next((key for key, profile in PROFILES.items()
                     if profile.get("served_id") == served_id), None)
         if pid is None:
             raise LookupError(served_id)
-        profile = PROFILES[pid]
-        expected_id = engine_model_id(profile)
-        expected_ctx = int(profile.get("ctx", 262144))
-        current = health()
-        if (current and current.get("loaded") and current.get("model") == expected_id
-                and int(current.get("max_context") or 0) == expected_ctx):
-            return served_id
         if not ready(pid)[0]:
             raise RuntimeError("模型文件未就绪")
         job = start_engine(pid, force=True)
-        timeout_s = 930 if profile.get("family") == "qwen36" else 330
+        timeout_s = 930 if PROFILES[pid].get("family") == "qwen36" else 330
         deadline = time.time() + timeout_s
         while time.time() < deadline:
             current = health()
-            if (current and current.get("loaded") and current.get("model") == expected_id
-                    and int(current.get("max_context") or 0) == expected_ctx):
+            if current and current.get("loaded") and current.get("model") == served_id:
                 return served_id
             if job["state"] in ("failed", "cancelled"):
                 raise RuntimeError(job.get("detail") or "模型加载失败")
@@ -1398,11 +1367,7 @@ def set_low_resource(enabled):
         return GATEWAY.public()
     low_model = PROFILES["game"]["served_id"]
     current = health() or {}
-    current_profile = next((profile for profile in PROFILES.values()
-                            if engine_model_id(profile) == current.get("model")
-                            and int(profile.get("ctx", 262144)) == int(current.get("max_context") or 0)), None)
-    current_model = (current_profile["served_id"] if current_profile
-                     else current.get("model", "") if current.get("loaded") else "")
+    current_model = current.get("model", "") if current.get("loaded") else ""
     if enabled:
         target = low_model
         return_model = (current_model if current_model and current_model != low_model
@@ -1696,8 +1661,7 @@ class Handler(BaseHTTPRequestHandler):
                                  "vision": p.get("vision"), "parallel": p.get("parallel"),
                                  "ready": ok, "have_bytes": have, "need_bytes": need,
                                  "repo_dir": p.get("repo_dir"),
-                                 "active": bool(h and h.get("model") == engine_model_id(p)
-                                                and int(h.get("max_context") or 0) == int(p.get("ctx", 262144)))})
+                                 "active": bool(h and h.get("model") == p.get("served_id"))})
             return self.reply({"health": h, "vram": vram(), "ram_free_gb": ram_free_gb(),
                                "ram_total_gb": mem_stats()[1],
                                "page": {k: LAST_BEAT.get(k) for k in ("w", "h", "dpr", "sw", "sh")},
