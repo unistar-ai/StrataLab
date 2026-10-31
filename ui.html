@@ -334,14 +334,6 @@
   <section class="tab on" id="tab-dash">
     <div class="banner" id="banner"></div>
 
-    <div class="card">
-      <h2>游戏低占用模式 <span class="hint" id="mode-state">读取中…</span></h2>
-      <div class="muted">所有 Gateway 请求固定路由到 Qwen3.6-35B-A3B Q4，64K 上下文、最多 32K 输出，CPU 视觉，为游戏预留 8 GiB 显存。切换会等待已接收请求完成。</div>
-      <div class="btnrow" style="margin-top:12px">
-        <button class="primary" id="mode-toggle" onclick="toggleLowResource()">进入低占用模式</button>
-      </div>
-    </div>
-
     <div class="sec">
       <div>
         <div class="eyebrow">状态</div>
@@ -427,6 +419,13 @@
         <h1>模型与磁盘</h1>
       </div>
       <div class="tools"><span class="mute" id="scan-tag">—</span></div>
+    </div>
+    <div class="card">
+      <h2>游戏低占用模式 <span class="hint" id="mode-state">读取中…</span></h2>
+      <div class="muted">所有 Gateway 请求固定路由到 Qwen3.6-35B-A3B Q4，64K 上下文、最多 32K 输出，CPU 视觉，为游戏预留 8 GiB 显存。切换会等待已接收请求完成。</div>
+      <div class="btnrow" style="margin-top:12px">
+        <button class="primary" id="mode-toggle" onclick="toggleLowResource()">进入低占用模式</button>
+      </div>
     </div>
     <div class="card">
       <h2>模型 <span class="hint">启动会占满显存，40–90 秒</span></h2>
@@ -855,8 +854,8 @@ function openTab(name){
   document.querySelectorAll("#nav button").forEach(b => b.classList.toggle("on", b.dataset.tab === name));
   document.querySelectorAll(".tab").forEach(t => t.classList.toggle("on", t.id === "tab-" + name));
   try { history.replaceState(null, "", "#" + name); } catch {}
-  if (name === "dash") { loadLive(); loadLowResource(); }
-  if (name === "models") loadScan();
+  if (name === "dash") loadLive();
+  if (name === "models") { loadScan(); loadLowResource(); }
   if (name === "term") termEnter();
   if (name === "history") loadHistory();
   if (name === "gateway") { loadGateway(); loadFrp(); }
@@ -2096,7 +2095,8 @@ document.addEventListener("visibilitychange", () => { if (!document.hidden) load
 setInterval(loadLive, 500);
 setInterval(() => loadStatus().catch(() => {}), 5000);
 setInterval(() => loadStats(), 4000);
-setInterval(() => { if (S.tab === "dash") { loadMetrics(); loadLowResource(); } }, 3000);
+setInterval(() => { if (S.tab === "dash") loadMetrics(); }, 3000);
+setInterval(() => { if (S.tab === "models") loadLowResource(); }, 3000);
 setInterval(() => { if (S.tab === "gateway") { loadGateway(); loadFrp(); } }, 4000);
 setInterval(() => { if (S.tab === "logs") loadLogs(); }, 8000);
 </script>
