@@ -769,14 +769,15 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 raise Reject(404, "端点不存在")
             key_id, key_name = gateway._authenticated(self)
             gateway._check_rate()
+            data = None
             if self.command == "GET" and gateway.models is not None:
                 gateway._check_quota(key_id)
                 gateway._enter_queue(gateway.context_tokens(data, path))
                 try:
-                    return self._send_models(gateway.models())
+                    status = self._send_models(gateway.models())
+                    return status
                 finally:
                     gateway._leave_queue()
-            data = None
             if self.command == "POST":
                 data = self._read_json()
                 model = data.get("model") or ""
