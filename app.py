@@ -166,6 +166,21 @@ DEFAULT_PROFILES = {
         "download_url": ("https://modelscope.cn/models/unsloth/Qwen3.6-35B-A3B-MTP-GGUF/"
                          "resolve/master/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf"),
     },
+    "perf64p2": {
+        "title": "35B-A3B 64K 高性能 ×2", "model_label": "Qwen3.6-35B-A3B · 64K 高性能 ×2",
+        "family": "qwen36", "model": "ud-q4_k_xl",
+        "token_model": "qwen36-ud-q4_k_xl",
+        "path": str(MODELS_ROOT / "qwen36-UD-Q4_K_XL"),
+        "served_id": "qwen3.6-35b-a3b-ud-q4_k_xl-perf64p2",
+        "engine_id": "qwen3.6-35b-a3b-ud-q4_k_xl",
+        "ctx": 65536, "kv": "", "vision": "cpu", "parallel": 2, "extra": [],
+        "desc": "64K 高性能双槽位。专家显存自动分配，两个请求可同时解码；每个槽位有独立 KV 和会话状态。",
+        "speed": "22.9 GB 权重 · 64K · 2 并发 · 专家显存自动",
+        "shard": ["Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf", 22853663008],
+        "repo": "unsloth/Qwen3.6-35B-A3B-MTP-GGUF",
+        "download_url": ("https://modelscope.cn/models/unsloth/Qwen3.6-35B-A3B-MTP-GGUF/"
+                         "resolve/master/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf"),
+    },
 }
 
 LOCK = threading.Lock()
@@ -417,6 +432,16 @@ def runtime_expert_vram(profile):
     return None
 
 
+def runtime_parallel(profile):
+    name = f"launch-{profile['model']}-{int(profile.get('ctx', 262144)) // 1024}k"
+    path = Path(os.environ.get("APPDATA", "")) / "Strata" / "profiles" / f"{name}.json"
+    try:
+        overrides = json.loads(path.read_text(encoding="utf-8-sig")).get("overrides") or {}
+        return int(overrides.get("parallel", 1))
+    except (OSError, ValueError, TypeError):
+        return None
+
+
 def profile_matches_runtime(profile, current):
     if not current or not current.get("loaded"):
         return False
@@ -424,10 +449,19 @@ def profile_matches_runtime(profile, current):
         return False
     if int(profile.get("ctx", 262144)) != int(current.get("max_context") or 0):
         return False
+    if runtime_parallel(profile) != int(profile.get("parallel", 1)):
+        return False
     desired = profile_expert_vram(profile)
     actual = runtime_expert_vram(profile)
     return (desired is None and actual is None) or (
         desired is not None and actual is not None and abs(desired - actual) < 1e-6)
+
+
+def sync_gateway_slots(current=None):
+    current = current or health()
+    profile = next((item for item in PROFILES.values()
+                    if profile_matches_runtime(item, current)), None)
+    GATEWAY.set_active_slots(int(profile.get("parallel", 1)) if profile else 1)
 
 
 def ready(pid):
@@ -1356,6 +1390,7 @@ def start_engine(pid, force=False):
                 note = f"{hh.get('model')} · {hh.get('max_context', 0)//1024}K"
                 if cleaned:
                     note += f" · 清理 {cleaned} 个 stale 标记"
+                sync_gateway_slots(hh)
                 finish(job, "ready", note, result=hh)
                 append_history({"kind": "start", "profile": pid, "ok": True, "note": note})
                 return
@@ -1402,7 +1437,9 @@ def ensure_engine_model(served_id):
         if pid is None:
             raise LookupError(served_id)
         profile = PROFILES[pid]
-        if profile_matches_runtime(profile, health()):
+        current = health()
+        if profile_matches_runtime(profile, current):
+            sync_gateway_slots(current)
             return served_id
         if not ready(pid)[0]:
             raise RuntimeError("模型文件未就绪")
@@ -1410,7 +1447,9 @@ def ensure_engine_model(served_id):
         timeout_s = 930 if profile.get("family") == "qwen36" else 330
         deadline = time.time() + timeout_s
         while time.time() < deadline:
-            if profile_matches_runtime(profile, health()):
+            current = health()
+            if profile_matches_runtime(profile, current):
+                sync_gateway_slots(current)
                 return served_id
             if job["state"] in ("failed", "cancelled"):
                 raise RuntimeError(job.get("detail") or "模型加载失败")
@@ -2125,6 +2164,7 @@ def main():
             log_ui("gateway listening on 127.0.0.1:%d" % GATEWAY.config["port"])
         except (OSError, ValueError) as exc:
             log_ui("gateway failed to start: %s" % exc)
+    sync_gateway_slots()
     threading.Thread(target=vram_loop, daemon=True).start()
     threading.Thread(target=sampler, daemon=True).start()
     if open_it or os.environ.get("STRATA_LAB_WATCHDOG") == "1":

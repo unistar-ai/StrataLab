@@ -1627,7 +1627,8 @@ function renderGateway(data){
     kpi("今日请求", compact(today.requests), selected ? "按 " + esc(selected.name) + " 筛选" : "累计 " + compact(data.total_requests)) +
     kpi("今日 tokens", compact(today.tokens), "DeepSeek 峰价 " + cny(today.cost_cny || 0) + " / " + usd(today.cost_usd || 0)) +
     kpi("今日拒绝", compact(today.rejected), "鉴权 / 限额 / 上游错误") +
-    kpi("当前请求", nf(g.active), "排队 " + nf(g.waiting) + " · 短 " + compact((g.waiting_tokens || {}).short || 0)
+    kpi("当前请求", nf(g.active), "并发 " + nf(g.active) + "/" + nf(g.max_active || 1)
+      + " · 排队 " + nf(g.waiting) + " · 短 " + compact((g.waiting_tokens || {}).short || 0)
       + " / 长 " + compact((g.waiting_tokens || {}).long || 0) + " tok");
   const base = g.public_url || "";
   const v1 = base ? (base.endsWith("/v1") ? base : base + "/v1") : "（未配置公网 Base URL）";

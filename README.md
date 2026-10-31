@@ -126,9 +126,9 @@ Gateway 跟随 StrataLab 进程运行：退出 StrataLab 后，公网 API 也不
 - 只允许 `GET /v1/models`、`POST /v1/chat/completions`、`POST /v1/messages`，不代理管理 API、终端或任意路径。
 - `GET /v1/models` 列出本机分片完整的全部模型及加载状态，不要求引擎已启动。聊天请求的 `model` 可以是其中任意一个：Gateway 会先卸载之前的模型并加载目标模型，就绪后再转发；切换在单上游队列中串行执行，加载失败返回 503，未知模型返回 400。输出不能超过限额。OpenAI 同时接受 `max_tokens` 和 `max_completion_tokens`，两者都省略时应用 Gateway 上限；Anthropic 按协议要求 `max_tokens` 必填。
 - 模型页的“游戏低占用模式”使用 Qwen3.6-35B-A3B UD-Q4_K_XL、64K 上下文、CPU 视觉编码器和单请求槽位，并为游戏预留 8 GiB 显存。启用后所有 Gateway 聊天请求固定路由到该模型，单次输出最多 32768 tokens；模式切换先停止接收新请求并等待已接收请求完成，再卸载旧模型。退出后恢复进入模式前的模型。审计同时保存客户端请求模型、实际执行模型和低占用标记。
-- 模型页另有 `qwen3.6-35b-a3b-ud-q4_k_xl-perf64` 高性能档：同样 64K 与 CPU 视觉，但不指定 `--expert-vram`，由引擎自动使用可用显存放置专家；适合关闭游戏和其他 GPU 占用程序时使用。两个 64K 档通过实际启动配置中的专家显存预算区分，状态与路由不会混淆。
+- 模型页另有 `qwen3.6-35b-a3b-ud-q4_k_xl-perf64` 高性能档：同样 64K 与 CPU 视觉，但不指定 `--expert-vram`，由引擎自动使用可用显存放置专家；适合关闭游戏和其他 GPU 占用程序时使用。`qwen3.6-35b-a3b-ud-q4_k_xl-perf64p2` 使用相同配置并开启 `parallel=2`，允许两个请求同时解码。各 64K 档通过实际启动配置中的专家显存预算和并行槽位数区分，状态与路由不会混淆。
 - 默认请求体最大 4 MiB、30 请求/分钟、单次输出最多 8192 tokens。
-- 上游固定单并发，等待队列分为短上下文和长上下文两类，默认长文阈值为 32768 tokens。每个请求按“目标模型离线 tokenizer 计算的输入 tokens + `max_tokens`”计入队列；计数复用模型包的 chat template、系统消息、工具定义和控制 token，无需启动引擎，tokenizer 无法加载时明确报错而不回退字节估算。
+- Gateway 上游并发数跟随当前运行档位的 `parallel` 自动设置：普通档为 1，高性能双槽位档为 2。等待队列分为短上下文和长上下文两类，默认长文阈值为 32768 tokens。每个请求按“目标模型离线 tokenizer 计算的输入 tokens + `max_tokens`”计入队列；计数复用模型包的 chat template、系统消息、工具定义和控制 token，无需启动引擎，tokenizer 无法加载时明确报错而不回退字节估算。
 - 短队列默认等待预算 262144 tokens，长队列默认 1048576 tokens，按等待请求的总上下文长度限流而不是按请求数。短、长任务按 2:1 调度；超过单请求预算、等待 token 预算或 30 秒排队超时返回 429。
 - 支持 OpenAI 与 Anthropic 的非流式响应和 SSE；流式响应逐行刷新，不在 Gateway 缓冲完整内容。
 - 全局和每个 Key 的用量都持久化到 `gateway-state.json`，重启后不清零；旧单 Key 配置自动迁移为“主 Key”。

@@ -278,6 +278,7 @@ class GatewayService:
         self.queue_sequence = 0
         self.schedule = 0
         self.active = 0
+        self.max_active = 1
         self.active_kind = ""
         self.active_tokens = 0
         self.waiting = 0
@@ -412,6 +413,11 @@ class GatewayService:
             return self.config["low_resource_max_tokens"]
         return self.config["max_tokens"]
 
+    def set_active_slots(self, slots):
+        with self.condition:
+            self.max_active = max(1, min(8, int(slots)))
+            self.condition.notify_all()
+
     def begin_mode_change(self):
         with self.condition:
             if self.mode_changing:
@@ -445,6 +451,7 @@ class GatewayService:
                 "key_id": active_keys[0]["id"] if active_keys else "",
                 "key_count": len(self.config["keys"]),
                 "active": self.active,
+                "max_active": self.max_active,
                 "active_kind": self.active_kind,
                 "active_tokens": self.active_tokens,
                 "waiting": self.waiting,
@@ -600,7 +607,7 @@ class GatewayService:
                 raise Reject(429, f"Key「{item['name']}」已达到今日金额额度 {symbol}{money['amount']:g}")
 
     def _next_ticket_locked(self):
-        if self.active or not self.queue:
+        if self.active >= self.max_active or not self.queue:
             return None
         kinds = {item["kind"] for item in self.queue.values()}
         if len(kinds) == 2:
@@ -641,9 +648,9 @@ class GatewayService:
                     self.condition.wait(remaining)
                 if not acquired:
                     raise Reject(429, "排队超时", 5)
-                self.active = 1
-                self.active_kind = kind
-                self.active_tokens = context_tokens
+                self.active += 1
+                self.active_kind = kind if self.active == 1 else "mixed"
+                self.active_tokens = context_tokens if self.active == 1 else 0
             finally:
                 item = self.queue.pop(ticket, None)
                 if item is not None:
@@ -653,9 +660,13 @@ class GatewayService:
 
     def _leave_queue(self):
         with self.condition:
-            self.active = 0
-            self.active_kind = ""
-            self.active_tokens = 0
+            self.active = max(0, self.active - 1)
+            if self.active == 0:
+                self.active_kind = ""
+                self.active_tokens = 0
+            else:
+                self.active_kind = "mixed"
+                self.active_tokens = 0
             self.condition.notify_all()
 
     def _engine_model(self):
