@@ -1,10 +1,12 @@
 """Optional, stdlib-only API gateway for the local Strata engine."""
 
+import base64
 import datetime
 import hashlib
 import http.client
 import json
 import secrets
+import shutil
 import socket
 import threading
 import time
@@ -66,6 +68,20 @@ ALLOWED_ROUTES = {
 # leaves the whole queue stalled until its 300 s deadline whenever a wakeup is
 # missed or the smallest ticket belongs to a thread that is not awake yet.
 QUEUE_TICK_S = 1.0
+
+# Images that arrive with a request are written next to the content log instead
+# of being dropped, so an audit row can point at the real file. The folder is
+# pruned by total size, oldest audit first.
+IMAGE_DIR = "gateway-images"
+IMAGE_MAX_COUNT = 8
+IMAGE_MAX_BYTES = 8 * 1024 * 1024
+IMAGES_MAX_TOTAL_BYTES = 2 * 1024 * 1024 * 1024
+IMAGE_EXTENSIONS = {
+    "image/png": "png",
+    "image/jpeg": "jpg",
+    "image/webp": "webp",
+    "image/gif": "gif",
+}
 
 
 def validate_quota(daily_tokens):
@@ -209,7 +225,37 @@ def estimate_context_tokens(data):
     return max(1, (state["bytes"] + 2) // 3) + state["images"] * 2048 + 32 + output
 
 
-def sanitize_request(data, max_chars):
+def image_payload(value):
+    """Return (mime, raw bytes) for an image part or data URL, else (None, None)."""
+    if isinstance(value, str):
+        head, _, payload = value.partition(",")
+        if not head.startswith("data:image/") or not payload:
+            return None, None
+        mime = head[5:].split(";")[0] or "image/png"
+        try:
+            return mime, base64.b64decode(payload)
+        except ValueError:
+            return None, None
+    if not isinstance(value, dict):
+        return None, None
+    source = value.get("source")
+    if isinstance(source, dict):
+        data = source.get("data")
+        mime = str(source.get("media_type") or "image/png")
+        if isinstance(data, str) and data:
+            try:
+                return mime, base64.b64decode(data)
+            except ValueError:
+                return None, None
+    url = value.get("image_url")
+    if isinstance(url, dict):
+        url = url.get("url")
+    if isinstance(url, str) and url.startswith("data:image/"):
+        return image_payload(url)
+    return None, None
+
+
+def sanitize_request(data, max_chars, save_image=None):
     if not isinstance(data, dict):
         return ""
 
@@ -217,12 +263,16 @@ def sanitize_request(data, max_chars):
         if isinstance(value, dict):
             kind = str(value.get("type") or value.get("kind") or "").lower()
             if kind in ("image", "image_url", "input_image"):
-                return {"type": kind, "source": "[图片内容省略]"}
+                mime, raw = image_payload(value)
+                name = save_image(mime, raw) if (save_image and raw) else ""
+                return {"type": kind, "source": f"[图片 {name}]" if name else "[图片内容省略]"}
             return {key: clean(child) for key, child in value.items()}
         if isinstance(value, list):
             return [clean(child) for child in value]
         if isinstance(value, str) and value.startswith("data:image/"):
-            return "[图片 Base64 省略]"
+            mime, raw = image_payload(value)
+            name = save_image(mime, raw) if (save_image and raw) else ""
+            return f"[图片 {name}]" if name else "[图片 Base64 省略]"
         return value
 
     request = {key: clean(data[key]) for key in ("system", "messages", "tools") if key in data}
@@ -291,6 +341,7 @@ class GatewayService:
         self.httpd = None
         self.thread = None
         self.rate = deque()
+        self._images_pruned = 0.0
         self.config = self._load_config()
         self.state = self._load_state()
         self.recent = deque(self._read_audit(), maxlen=500)
@@ -707,6 +758,38 @@ class GatewayService:
         except Exception as exc:
             raise Reject(503, f"模型加载失败：{str(exc)[:300]}")
 
+    def _store_image(self, audit_id, mime, raw, index):
+        if not raw or index >= IMAGE_MAX_COUNT or len(raw) > IMAGE_MAX_BYTES:
+            return ""
+        extension = IMAGE_EXTENSIONS.get(str(mime or "").lower(), "bin")
+        folder = self.app_dir / IMAGE_DIR / audit_id
+        name = f"img-{index}.{extension}"
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+            (folder / name).write_bytes(raw)
+        except OSError:
+            return ""
+        self._prune_images()
+        return f"{IMAGE_DIR}/{audit_id}/{name}"
+
+    def _prune_images(self):
+        now = time.monotonic()
+        if now - self._images_pruned < 60:
+            return
+        self._images_pruned = now
+        root = self.app_dir / IMAGE_DIR
+        try:
+            folders = sorted(root.iterdir(), key=lambda path: path.stat().st_mtime)
+        except OSError:
+            return
+        total = sum(path.stat().st_size for path in root.rglob("*") if path.is_file())
+        for folder in folders:
+            if total <= IMAGES_MAX_TOTAL_BYTES:
+                break
+            size = sum(path.stat().st_size for path in folder.rglob("*") if path.is_file())
+            shutil.rmtree(folder, ignore_errors=True)
+            total -= size
+
     def _record(self, row, content=None):
         with self.lock:
             self.recent.append(row)
@@ -787,6 +870,7 @@ class GatewayService:
                     path.unlink()
                 except FileNotFoundError:
                     pass
+            shutil.rmtree(self.app_dir / IMAGE_DIR, ignore_errors=True)
 
 
 class GatewayHandler(BaseHTTPRequestHandler):
@@ -940,6 +1024,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
     def _handle(self):
         gateway = self.gateway
         started = time.monotonic()
+        audit_id = uuid.uuid4().hex[:12]
         key_id = ""
         key_name = ""
         model = ""
@@ -979,7 +1064,16 @@ class GatewayHandler(BaseHTTPRequestHandler):
             if self.command == "POST":
                 data = self._read_json()
                 data = gateway.apply_key_policy(key_id, data, path)
-                content["request"] = sanitize_request(data, gateway.config["content_max_chars"])
+                saved = [0]
+
+                def save_image(mime, raw):
+                    name = gateway._store_image(audit_id, mime, raw, saved[0])
+                    saved[0] += 1
+                    return name
+
+                content["request"] = sanitize_request(
+                    data, gateway.config["content_max_chars"],
+                    save_image if gateway.config["store_content"] else None)
                 requested_model = data.get("model") or ""
                 if not isinstance(requested_model, str) or not requested_model or len(requested_model) > 200:
                     raise Reject(400, "model 必填")
@@ -1045,7 +1139,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
             cost_usd = (cached * 0.006 + uncached * 0.3 + completion * 1.2) / 1000000
             cost_cny = (cached * 0.04 + uncached * 2 + completion * 8) / 1000000
             gateway._record({
-                "id": uuid.uuid4().hex[:12],
+                "id": audit_id,
                 "ts": time.time(),
                 "key_id": key_id or "—",
                 "key_name": key_name or "—",
