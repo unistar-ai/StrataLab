@@ -272,10 +272,10 @@
     font:18px/1 var(--sans); cursor:pointer;
   }
   .modal-close:hover{color:var(--txt); border-color:var(--line2)}
-  .audit-images{display:flex; flex-wrap:wrap; gap:8px; margin:8px 0 10px}
-  .audit-images a{display:block; line-height:0; border:1px solid var(--line); border-radius:10px; overflow:hidden}
+  .audit-images{display:flex; flex-wrap:wrap; gap:10px; margin:8px 0 10px}
+  .audit-images a{display:block; line-height:0; border:1px solid var(--line); border-radius:10px; overflow:hidden; background:var(--code-bg)}
   .audit-images a:hover{border-color:var(--line2)}
-  .audit-images img{width:96px; height:96px; object-fit:cover; display:block}
+  .audit-images img{max-width:100%; max-height:360px; object-fit:contain; display:block; cursor:zoom-in}
 
   /* ------------------------------------------------------------------ banner / toast */
   .banner{display:none; gap:10px; align-items:flex-start; font-size:12.5px; border-radius:12px; padding:11px 14px; line-height:1.6}
@@ -1708,7 +1708,9 @@ function auditImages(request){
     const url = "/api/gateway/image?id=" + encodeURIComponent(m[1]) + "&name=" + encodeURIComponent(m[2]);
     if (seen.has(url)) continue;
     seen.add(url);
-    out.push('<a href="' + url + '" target="_blank" rel="noopener"><img src="' + url + '" alt="' + esc(m[2]) + '"></a>');
+    out.push('<a href="' + url + '" target="_blank" rel="noopener" title="在新分页打开原图">'
+      + '<img src="' + url + '" alt="' + esc(m[2]) + '" loading="lazy" '
+      + 'onerror="this.parentNode.remove()"></a>');
   }
   return out.join("");
 }
