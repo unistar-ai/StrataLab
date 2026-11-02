@@ -140,10 +140,13 @@ Gateway 跟随 StrataLab 进程运行：退出 StrataLab 后，公网 API 也不
 「公网」页显示今日/累计请求、token、拒绝数、活动与排队请求，以及最近 100 条审计记录。可以按 API Key 筛选记录和今日统计；每条记录只有时间、Key 名称与 ID、路由、模型、状态码、耗时、排队前计算的输入与输出预算 `context_tokens`、实际输入/缓存/输出 token、DeepSeek 峰价下的人民币与美元成本，以及错误类别。`context_tokens` 在 400/429/502 时也会尽量保留，不受可选内容审计的字符截断影响：
 
 - 不记录完整 API Key。默认不保存提示词、消息或生成内容；在设置页开启“本机记录提示词和生成内容”后，才会按请求 ID 保存这些内容。
-- 元数据审计写入 `gateway-audit.jsonl`，超过 8 MiB 时轮转为一个 `.jsonl.1` 备份。
-- 可选内容审计写入 `gateway-content.jsonl`，包含提示词、生成内容和 reasoning；单段文本默认最多 20000 字符。仅本机管理页可读取，公网 Gateway 不提供该接口。
-- 请求里的图片解码后写入 `gateway-images/<请求 ID>/img-<序号>.<扩展名>`，内容记录里只留路径（如 `[图片 gateway-images/064cc7063a5e/img-0.png]`），Base64 不进 JSONL。每个请求最多 8 张、单张 16 MiB、单请求合计 48 MiB；保留策略是**30 天或总量 20 GiB，先到先删**，两种情况下都按最老的请求整目录删除。图片经 Base64 膨胀 4/3，所以要让大图进得来，`max_body_bytes` 也要相应放大（本机现为 64 MiB；默认 4 MiB 时超过约 3 MiB 的图会被 413 挡在门外）。清空审计会一并删除该目录。请求内容弹窗会把这些路径渲染成缩略图，点击在新分页打开原图（`GET /api/gateway/image?id=<请求 ID>&name=<文件名>`，只接受本机管理页的同源请求，参数按固定格式校验）。
-- 「清空审计与用量」会同时清空元数据、内容记录和全部计数，且不可撤销。
+- 元数据、内容与图片都存放在同目录的 SQLite 文件 `strata-lab.db`（WAL 模式，标准库 `sqlite3`，无额外依赖）。元数据表按时间、Key、状态建了索引，按 Key 或时间筛选是查询而不是全表扫描。
+- 内容表包含提示词、生成内容和 reasoning；单段文本默认最多 20000 字符。仅本机管理页可读取，公网 Gateway 不提供该接口。
+- 请求里的图片解码后存进 `images` 表（`request_id` + 文件名做联合主键），内容记录里只留引用（如 `[图片 gateway-images/064cc7063a5e/img-0.png]`），Base64 不入库。每个请求最多 8 张、单张 16 MiB、单请求合计 48 MiB。图片经 Base64 膨胀 4/3，所以要让大图进得来，`max_body_bytes` 也要相应放大（本机现为 64 MiB；默认 4 MiB 时超过约 3 MiB 的图会被 413 挡在门外）。
+- 保留策略：请求（含内容与图片）保留 **30 天**，或最多 200,000 行；图片另有 **20 GiB** 总量上限。三条规则都先删最老的请求，删除请求会级联删掉它的内容与图片，之后执行 `PRAGMA incremental_vacuum` 回收空间。检查最多每 10 分钟一次。
+- 请求内容弹窗把图片引用渲染成缩略图，点击在新分页打开原图（`GET /api/gateway/image?id=<请求 ID>&name=<文件名>`，只接受本机管理页的同源请求，参数按固定格式校验）。
+- 从旧版升级时，首次启动会自动把 `gateway-audit.jsonl`、`gateway-content.jsonl` 和 `gateway-images/` 导入数据库，核对行数一致后把旧文件改名为 `*.imported-<时间戳>` 留底，不会直接删除。
+- 「清空审计与用量」会同时清空元数据、内容、图片和全部计数，且不可撤销。
 
 ## 内置终端
 
@@ -213,9 +216,10 @@ strata serve: prompt 24 tokens = 17 reused + 7 read in 269 ms (26.0 tok/s),
 | `frp.json` | 是否让 FRPC 随 StrataLab 自动启动，默认关闭 |
 | `gateway.json` | 可选 Gateway 配置、多个命名 Key 的哈希、独立额度与启停状态；不含完整 API Key |
 | `gateway-state.json` | 全局及每个 Key 的每日和累计请求/token 计数，重启后保留 |
-| `gateway-audit.jsonl` | 不含消息内容的审计元数据，超过 8 MiB 轮转 |
-| `gateway-content.jsonl` | 可选的提示词、生成内容和 reasoning 审计；图片以路径引用，Base64 不入库 |
-| `gateway-images/<请求 ID>/` | 请求附带的图片，按审计 ID 分目录；单张 16 MiB，保留 30 天或 20 GiB，最老的先删 |
+| `strata-lab.db` | 审计元数据、可选的提示词/生成内容、请求图片（BLOB）；WAL 模式，含 `-wal` / `-shm` 两个伴生文件 |
+| `gateway-audit.jsonl.imported-*` | 旧版审计文件，导入数据库后改名留底，可自行删除 |
+| `gateway-content.jsonl.imported-*` | 旧版内容文件，同上 |
+| `gateway-images.imported-*/` | 旧版图片目录，同上 |
 | `logs/launch-<id>-<ts>.log` | 每次 `strata.cmd launch` 的原始输出 |
 | `logs/ui.log` | 控制台自己的生命周期（启动 / 窗口出现 / 关窗退出），排查"为什么没了"看这里 |
 | `logs/window.log` | 每次开窗的记录（用哪个浏览器、URL、尺寸） |

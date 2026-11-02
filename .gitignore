@@ -15,6 +15,12 @@ gateway-audit.jsonl
 gateway-audit.jsonl.1
 gateway-content.jsonl
 gateway-images/
+gateway-images.imported-*/
+gateway-audit.jsonl.imported-*
+gateway-content.jsonl.imported-*
+strata-lab.db
+strata-lab.db-wal
+strata-lab.db-shm
 *.log
 *.tmp
 

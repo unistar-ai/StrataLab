@@ -16,6 +16,8 @@ from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from gateway_db import Store
+
 
 DEFAULT_CONFIG = {
     "enabled": False,
@@ -69,16 +71,20 @@ ALLOWED_ROUTES = {
 # missed or the smallest ticket belongs to a thread that is not awake yet.
 QUEUE_TICK_S = 1.0
 
-# Images that arrive with a request are written next to the content log instead
-# of being dropped, so an audit row can point at the real file. Retention is
-# whichever comes first: a folder older than IMAGE_RETENTION_DAYS, or the total
-# growing past IMAGES_MAX_TOTAL_BYTES. Oldest audit goes first in both cases.
+# Images that arrive with a request are kept in the database next to the audit
+# row. Retention is whichever comes first: the request older than
+# IMAGE_RETENTION_DAYS, or the stored bytes passing IMAGES_MAX_TOTAL_BYTES.
+# Audit rows and their text use TEXT_RETENTION_DAYS / TEXT_MAX_ROWS the same way;
+# deleting a request takes its content and its images with it.
 IMAGE_DIR = "gateway-images"
 IMAGE_MAX_COUNT = 8
 IMAGE_MAX_BYTES = 16 * 1024 * 1024
 IMAGE_MAX_REQUEST_BYTES = 48 * 1024 * 1024
 IMAGES_MAX_TOTAL_BYTES = 20 * 1024 * 1024 * 1024
 IMAGE_RETENTION_DAYS = 30
+TEXT_RETENTION_DAYS = 30
+TEXT_MAX_ROWS = 200000
+PRUNE_INTERVAL_S = 600
 IMAGE_EXTENSIONS = {
     "image/png": "png",
     "image/jpeg": "jpg",
@@ -345,10 +351,12 @@ class GatewayService:
         self.thread = None
         self.rate = deque()
         self._images_pruned = 0.0
+        self._rows_pruned = 0.0
+        self._imported = None
         self.config = self._load_config()
         self.state = self._load_state()
-        self.recent = deque(self._read_audit(), maxlen=500)
-        self.content_recent = deque(self._read_content(), maxlen=200)
+        self.store = Store(self.app_dir / "strata-lab.db")
+        self._import_legacy()
         if self.config["keys"] and not self.state["key_days"]:
             today = self.state["days"].get(self._day())
             if today:
@@ -385,44 +393,30 @@ class GatewayService:
         tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
         tmp.replace(path)
 
-    def _read_audit(self):
-        rows = []
-        for path in (self.audit_file.with_suffix(".jsonl.1"), self.audit_file):
-            try:
-                for line in path.read_text(encoding="utf-8").splitlines():
-                    try:
-                        row = json.loads(line)
-                        if isinstance(row, dict):
-                            rows.append(row)
-                    except json.JSONDecodeError:
-                        pass
-            except OSError:
-                pass
-        return rows[-500:]
-
-    def _read_content(self):
-        rows = []
-        try:
-            for line in self.content_file.read_text(encoding="utf-8").splitlines():
-                try:
-                    row = json.loads(line)
-                    if isinstance(row, dict) and row.get("id"):
-                        rows.append(row)
-                except json.JSONDecodeError:
-                    pass
-        except OSError:
-            pass
-        return rows[-200:]
+    def _import_legacy(self):
+        """Move gateway-*.jsonl and gateway-images/ into the database once."""
+        audit_files = [self.audit_file.with_suffix(".jsonl.1"), self.audit_file]
+        legacy = audit_files + [self.content_file]
+        images_dir = self.app_dir / IMAGE_DIR
+        if not any(path.exists() for path in legacy) and not images_dir.is_dir():
+            return
+        summary = self.store.migrate(audit_files, [self.content_file], images_dir)
+        stored = self.store.counts()
+        if (summary["requests"] and stored["requests"] < summary["requests"]) or \
+                (summary["contents"] and stored["contents"] < summary["contents"]) or \
+                (summary["images_found"] and stored["images"] < summary["images"]):
+            raise RuntimeError("旧文件导入不完整，已保留原文件：" + json.dumps(
+                {"imported": summary, "stored": stored}, ensure_ascii=False))
+        stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        for path in legacy:
+            if path.exists():
+                path.replace(path.with_suffix(path.suffix + f".imported-{stamp}"))
+        if images_dir.is_dir():
+            images_dir.replace(self.app_dir / f"{IMAGE_DIR}.imported-{stamp}")
+        self._imported = {"stamp": stamp, **summary, **stored}
 
     def content(self, request_id):
-        with self.lock:
-            for row in reversed(self.content_recent):
-                if row["id"] == request_id:
-                    return row
-        for row in reversed(self._read_content()):
-            if row["id"] == request_id:
-                return row
-        return None
+        return self.store.content(request_id)
 
     @staticmethod
     def _day():
@@ -430,6 +424,9 @@ class GatewayService:
 
     def _active_keys(self):
         return [item for item in self.config["keys"] if item["enabled"]]
+
+    def image(self, request_id, name):
+        return self.store.image(request_id, name)
 
     def _find_key(self, key_id):
         return next((item for item in self.config["keys"] if item["id"] == key_id), None)
@@ -765,42 +762,24 @@ class GatewayService:
         if not raw or index >= IMAGE_MAX_COUNT or len(raw) > IMAGE_MAX_BYTES:
             return ""
         extension = IMAGE_EXTENSIONS.get(str(mime or "").lower(), "bin")
-        folder = self.app_dir / IMAGE_DIR / audit_id
         name = f"img-{index}.{extension}"
         try:
-            folder.mkdir(parents=True, exist_ok=True)
-            (folder / name).write_bytes(raw)
-        except OSError:
+            self.store.add_image(audit_id, name, mime, raw)
+        except Exception:
             return ""
         self._prune_images()
         return f"{IMAGE_DIR}/{audit_id}/{name}"
 
     def _prune_images(self):
         now = time.monotonic()
-        if now - self._images_pruned < 60:
+        if now - self._images_pruned < PRUNE_INTERVAL_S:
             return
         self._images_pruned = now
-        root = self.app_dir / IMAGE_DIR
-        try:
-            folders = sorted(root.iterdir(), key=lambda path: path.stat().st_mtime)
-        except OSError:
-            return
-        cutoff = time.time() - IMAGE_RETENTION_DAYS * 86400
-        total = sum(path.stat().st_size for path in root.rglob("*") if path.is_file())
-        for folder in folders:
-            try:
-                expired = folder.stat().st_mtime < cutoff
-                size = sum(path.stat().st_size for path in folder.rglob("*") if path.is_file())
-            except OSError:
-                continue
-            if not expired and total <= IMAGES_MAX_TOTAL_BYTES:
-                break
-            shutil.rmtree(folder, ignore_errors=True)
-            total -= size
+        self.store.prune(TEXT_RETENTION_DAYS, TEXT_MAX_ROWS,
+                         IMAGE_RETENTION_DAYS, IMAGES_MAX_TOTAL_BYTES)
 
     def _record(self, row, content=None):
         with self.lock:
-            self.recent.append(row)
             day_name = self._day()
             day = self.state["days"].setdefault(day_name, {"requests": 0, "rejected": 0, "tokens": 0})
             day["requests"] = int(day.get("requests", 0)) + 1
@@ -826,25 +805,21 @@ class GatewayService:
                 key_day["cost_usd"] = float(key_day.get("cost_usd", 0)) + float(row.get("cost_usd") or 0)
                 for old in sorted(key_days)[:-62]:
                     key_days.pop(old, None)
+            record = None
             if content and self.config["store_content"]:
                 record = dict(content)
                 record.update({"id": row["id"], "ts": row["ts"], "key_id": row["key_id"],
                                "key_name": row["key_name"], "model": row["model"],
                                "status": row["status"]})
-                self.content_recent.append(record)
-                try:
-                    with self.content_file.open("a", encoding="utf-8") as fh:
-                        fh.write(json.dumps(record, ensure_ascii=False) + "\n")
-                except OSError:
-                    pass
             try:
+                self.store.add(row, record)
                 self._save_json(self.state_file, self.state)
-                if self.audit_file.exists() and self.audit_file.stat().st_size > 8 * 1024 * 1024:
-                    self.audit_file.replace(self.audit_file.with_suffix(".jsonl.1"))
-                with self.audit_file.open("a", encoding="utf-8") as fh:
-                    fh.write(json.dumps(row, ensure_ascii=False) + "\n")
-            except OSError:
+            except Exception:
                 pass
+            if time.monotonic() - self._rows_pruned > PRUNE_INTERVAL_S:
+                self._rows_pruned = time.monotonic()
+                self.store.prune(TEXT_RETENTION_DAYS, TEXT_MAX_ROWS,
+                                 IMAGE_RETENTION_DAYS, IMAGES_MAX_TOTAL_BYTES)
 
     def monitor(self, key_id=None):
         with self.lock:
@@ -854,7 +829,6 @@ class GatewayService:
             else:
                 day = dict(self.state["days"].get(self._day(),
                              {"requests": 0, "rejected": 0, "tokens": 0}))
-            rows = [row for row in self.recent if not key_id or row.get("key_id") == key_id]
             return {
                 "gateway": self.public(),
                 "keys": self.keys_public(),
@@ -862,22 +836,16 @@ class GatewayService:
                 "today": day,
                 "total_requests": self.state.get("total_requests", 0),
                 "total_tokens": self.state.get("total_tokens", 0),
-                "recent": list(reversed(rows))[:100],
+                "recent": self.store.recent(key_id or None, 100),
                 "audit": ("本机记录提示词和生成内容；不保存 API Key" if self.config["store_content"]
                           else "仅元数据；不保存 API Key、提示词或生成内容"),
             }
 
     def clear_audit(self):
         with self.lock:
-            self.recent.clear()
-            self.content_recent.clear()
             self.state = {"total_requests": 0, "total_tokens": 0, "days": {}, "key_days": {}}
             self._save_json(self.state_file, self.state)
-            for path in (self.audit_file, self.audit_file.with_suffix(".jsonl.1"), self.content_file):
-                try:
-                    path.unlink()
-                except FileNotFoundError:
-                    pass
+            self.store.clear()
             shutil.rmtree(self.app_dir / IMAGE_DIR, ignore_errors=True)
 
 

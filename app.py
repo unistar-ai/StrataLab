@@ -68,8 +68,6 @@ LOGS = APP_DIR / "logs"
 STATIC_FILES = ("xterm.js", "xterm.css", "addon-fit.js")
 IMAGE_ID_RE = re.compile(r"[0-9a-f]{12}")
 IMAGE_NAME_RE = re.compile(r"img-\d{1,2}\.(png|jpg|webp|gif|bin)")
-IMAGE_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".webp": "image/webp",
-               ".gif": "image/gif"}
 
 # The terminal's shell (and pi inside it) needs node and git on PATH. Putting them into the
 # lab's own environment once is enough: term_host.py inherits it and the shell inherits from
@@ -1800,11 +1798,12 @@ class Handler(BaseHTTPRequestHandler):
             name = params.get("name") or ""
             if not IMAGE_ID_RE.fullmatch(audit) or not IMAGE_NAME_RE.fullmatch(name):
                 return self.reply({"error": "bad image reference"}, 400)
-            f = APP_DIR / "gateway-images" / audit / name
-            if not f.is_file():
+            stored = GATEWAY.image(audit, name)
+            if stored is None:
                 return self.reply({"error": "not found"}, 404)
-            return self._send(f.read_bytes(), IMAGE_TYPES.get(f.suffix.lower(),
-                                                              "application/octet-stream"))
+            mime, raw = stored
+            return self._send(raw, mime if mime.startswith("image/")
+                              else "application/octet-stream")
 
         if path == "/api/frp":
             return self.reply({"frp": FRPC.public(), "logs": FRPC.logs()})
