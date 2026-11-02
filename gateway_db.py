@@ -70,8 +70,12 @@ class Store:
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA synchronous=NORMAL")
         self.conn.execute("PRAGMA foreign_keys=ON")
-        self.conn.execute("PRAGMA auto_vacuum=INCREMENTAL")
         with self.lock:
+            if self.conn.execute("PRAGMA auto_vacuum").fetchone()[0] != 2:
+                # auto_vacuum only takes effect before the first table exists, so a
+                # database created without it needs one VACUUM to switch modes.
+                self.conn.execute("PRAGMA auto_vacuum=INCREMENTAL")
+                self.conn.execute("VACUUM")
             for statement in SCHEMA:
                 self.conn.execute(statement)
             self.conn.commit()
