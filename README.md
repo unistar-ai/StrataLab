@@ -141,7 +141,8 @@ Gateway 跟随 StrataLab 进程运行：退出 StrataLab 后，公网 API 也不
 
 - 不记录完整 API Key。默认不保存提示词、消息或生成内容；在设置页开启“本机记录提示词和生成内容”后，才会按请求 ID 保存这些内容。
 - 元数据审计写入 `gateway-audit.jsonl`，超过 8 MiB 时轮转为一个 `.jsonl.1` 备份。
-- 可选内容审计写入 `gateway-content.jsonl`，包含提示词、生成内容和 reasoning；图片 Base64 省略，单段文本默认最多 20000 字符。仅本机管理页可读取，公网 Gateway 不提供该接口。
+- 可选内容审计写入 `gateway-content.jsonl`，包含提示词、生成内容和 reasoning；单段文本默认最多 20000 字符。仅本机管理页可读取，公网 Gateway 不提供该接口。
+- 请求里的图片解码后写入 `gateway-images/<请求 ID>/img-<序号>.<扩展名>`，内容记录里只留路径（如 `[图片 gateway-images/064cc7063a5e/img-0.png]`），Base64 不进 JSONL。每个请求最多 8 张、单张 8 MiB，目录总量上限 2 GiB，超出时按最老的请求先删。清空审计会一并删除该目录。
 - 「清空审计与用量」会同时清空元数据、内容记录和全部计数，且不可撤销。
 
 ## 内置终端
@@ -213,7 +214,8 @@ strata serve: prompt 24 tokens = 17 reused + 7 read in 269 ms (26.0 tok/s),
 | `gateway.json` | 可选 Gateway 配置、多个命名 Key 的哈希、独立额度与启停状态；不含完整 API Key |
 | `gateway-state.json` | 全局及每个 Key 的每日和累计请求/token 计数，重启后保留 |
 | `gateway-audit.jsonl` | 不含消息内容的审计元数据，超过 8 MiB 轮转 |
-| `gateway-content.jsonl` | 可选的提示词、生成内容和 reasoning 审计；图片 Base64 省略 |
+| `gateway-content.jsonl` | 可选的提示词、生成内容和 reasoning 审计；图片以路径引用，Base64 不入库 |
+| `gateway-images/<请求 ID>/` | 请求附带的图片，按审计 ID 分目录；总量上限 2 GiB，最老的先删 |
 | `logs/launch-<id>-<ts>.log` | 每次 `strata.cmd launch` 的原始输出 |
 | `logs/ui.log` | 控制台自己的生命周期（启动 / 窗口出现 / 关窗退出），排查"为什么没了"看这里 |
 | `logs/window.log` | 每次开窗的记录（用哪个浏览器、URL、尺寸） |
