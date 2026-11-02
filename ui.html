@@ -273,9 +273,14 @@
   }
   .modal-close:hover{color:var(--txt); border-color:var(--line2)}
   .audit-images{display:flex; flex-wrap:wrap; gap:10px; margin:8px 0 10px}
-  .audit-images a{display:block; line-height:0; border:1px solid var(--line); border-radius:10px; overflow:hidden; background:var(--code-bg)}
-  .audit-images a:hover{border-color:var(--line2)}
-  .audit-images img{max-width:100%; max-height:360px; object-fit:contain; display:block; cursor:zoom-in}
+  .audit-images .shot{display:block; line-height:0; border:1px solid var(--line); border-radius:10px; overflow:hidden; background:var(--code-bg); cursor:zoom-in}
+  .audit-images .shot:hover{border-color:var(--line2)}
+  .audit-images img{max-width:100%; max-height:360px; object-fit:contain; display:block}
+  #audit-image-modal{z-index:120; cursor:zoom-out}
+  .image-viewer{
+    max-width:96vw; max-height:92vh; object-fit:contain; border-radius:10px;
+    box-shadow:0 24px 80px rgba(0,0,0,.55); background:var(--code-bg); cursor:default;
+  }
 
   /* ------------------------------------------------------------------ banner / toast */
   .banner{display:none; gap:10px; align-items:flex-start; font-size:12.5px; border-radius:12px; padding:11px 14px; line-height:1.6}
@@ -638,6 +643,9 @@
         <div class="eyebrow" style="margin-top:12px">思考过程</div>
         <pre class="logbox" id="audit-reasoning" style="flex:initial;min-height:0;max-height:320px"></pre>
       </div>
+    </div>
+    <div class="modal-backdrop" id="audit-image-modal" onclick="closeAuditImage(event)">
+      <img class="image-viewer" id="audit-image-full" alt="请求图片">
     </div>
   </section>
 
@@ -1708,19 +1716,31 @@ function auditImages(request){
     const url = "/api/gateway/image?id=" + encodeURIComponent(m[1]) + "&name=" + encodeURIComponent(m[2]);
     if (seen.has(url)) continue;
     seen.add(url);
-    out.push('<a href="' + url + '" target="_blank" rel="noopener" title="在新分页打开原图">'
+    out.push('<div class="shot" title="点开放大" onclick="openAuditImage(&quot;' + url + '&quot;)">'
       + '<img src="' + url + '" alt="' + esc(m[2]) + '" loading="lazy" '
-      + 'onerror="this.parentNode.remove()"></a>');
+      + 'onerror="this.parentNode.remove()"></div>');
   }
   return out.join("");
+}
+function openAuditImage(url){
+  $("audit-image-full").src = url;
+  $("audit-image-modal").style.display = "flex";
+}
+function closeAuditImage(event){
+  if (event && event.target.id === "audit-image-full") return;
+  $("audit-image-modal").style.display = "none";
+  $("audit-image-full").removeAttribute("src");
 }
 function closeAuditContent(event){
   if (event && event.target !== $("audit-content-modal")) return;
   $("audit-content-modal").style.display = "none";
   $("audit-images").innerHTML = "";
+  closeAuditImage();
 }
 document.addEventListener("keydown", event => {
-  if (event.key === "Escape" && $("audit-content-modal").style.display !== "none") closeAuditContent();
+  if (event.key !== "Escape") return;
+  if ($("audit-image-modal").style.display !== "none") return closeAuditImage();
+  if ($("audit-content-modal").style.display !== "none") closeAuditContent();
 });
 function renderFrp(data){
   const f = data.frp;
