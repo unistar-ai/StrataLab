@@ -272,6 +272,10 @@
     font:18px/1 var(--sans); cursor:pointer;
   }
   .modal-close:hover{color:var(--txt); border-color:var(--line2)}
+  .audit-images{display:flex; flex-wrap:wrap; gap:8px; margin:8px 0 10px}
+  .audit-images a{display:block; line-height:0; border:1px solid var(--line); border-radius:10px; overflow:hidden}
+  .audit-images a:hover{border-color:var(--line2)}
+  .audit-images img{width:96px; height:96px; object-fit:cover; display:block}
 
   /* ------------------------------------------------------------------ banner / toast */
   .banner{display:none; gap:10px; align-items:flex-start; font-size:12.5px; border-radius:12px; padding:11px 14px; line-height:1.6}
@@ -627,6 +631,7 @@
         <button class="modal-close" aria-label="关闭" onclick="closeAuditContent()">×</button>
         <h2>请求内容 <span class="hint" id="audit-content-meta"></span></h2>
         <div class="eyebrow">提示词与工具</div>
+        <div class="audit-images" id="audit-images"></div>
         <pre class="logbox" id="audit-request" style="flex:initial;min-height:0;max-height:320px"></pre>
         <div class="eyebrow" style="margin-top:12px">生成内容</div>
         <pre class="logbox" id="audit-response" style="flex:initial;min-height:0;max-height:320px"></pre>
@@ -1690,14 +1695,27 @@ async function viewGatewayContent(id){
     const data = await api("/api/gateway/content?id=" + encodeURIComponent(id));
     $("audit-content-modal").style.display = "flex";
     $("audit-content-meta").textContent = (data.key_name || "—") + " · " + (data.model || "—") + " · HTTP " + data.status;
+    $("audit-images").innerHTML = auditImages(data.request);
     $("audit-request").textContent = auditPretty(data.request);
     $("audit-response").textContent = data.response || "（空）";
     $("audit-reasoning").textContent = data.reasoning || "（空）";
   } catch (e){ toast(e.message, true); }
 }
+function auditImages(request){
+  const seen = new Set();
+  const out = [];
+  for (const m of (request || "").matchAll(/gateway-images\/([0-9a-f]{6,64})\/(img-\d+\.[a-z]+)/g)){
+    const url = "/api/gateway/image?id=" + encodeURIComponent(m[1]) + "&name=" + encodeURIComponent(m[2]);
+    if (seen.has(url)) continue;
+    seen.add(url);
+    out.push('<a href="' + url + '" target="_blank" rel="noopener"><img src="' + url + '" alt="' + esc(m[2]) + '"></a>');
+  }
+  return out.join("");
+}
 function closeAuditContent(event){
   if (event && event.target !== $("audit-content-modal")) return;
   $("audit-content-modal").style.display = "none";
+  $("audit-images").innerHTML = "";
 }
 document.addEventListener("keydown", event => {
   if (event.key === "Escape" && $("audit-content-modal").style.display !== "none") closeAuditContent();

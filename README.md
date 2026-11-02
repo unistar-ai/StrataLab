@@ -142,7 +142,7 @@ Gateway 跟随 StrataLab 进程运行：退出 StrataLab 后，公网 API 也不
 - 不记录完整 API Key。默认不保存提示词、消息或生成内容；在设置页开启“本机记录提示词和生成内容”后，才会按请求 ID 保存这些内容。
 - 元数据审计写入 `gateway-audit.jsonl`，超过 8 MiB 时轮转为一个 `.jsonl.1` 备份。
 - 可选内容审计写入 `gateway-content.jsonl`，包含提示词、生成内容和 reasoning；单段文本默认最多 20000 字符。仅本机管理页可读取，公网 Gateway 不提供该接口。
-- 请求里的图片解码后写入 `gateway-images/<请求 ID>/img-<序号>.<扩展名>`，内容记录里只留路径（如 `[图片 gateway-images/064cc7063a5e/img-0.png]`），Base64 不进 JSONL。每个请求最多 8 张、单张 8 MiB，目录总量上限 2 GiB，超出时按最老的请求先删。清空审计会一并删除该目录。
+- 请求里的图片解码后写入 `gateway-images/<请求 ID>/img-<序号>.<扩展名>`，内容记录里只留路径（如 `[图片 gateway-images/064cc7063a5e/img-0.png]`），Base64 不进 JSONL。每个请求最多 8 张、单张 8 MiB，目录总量上限 2 GiB，超出时按最老的请求先删。清空审计会一并删除该目录。请求内容弹窗会把这些路径渲染成缩略图，点击在新分页打开原图（`GET /api/gateway/image?id=<请求 ID>&name=<文件名>`，只接受本机管理页的同源请求，参数按固定格式校验）。
 - 「清空审计与用量」会同时清空元数据、内容记录和全部计数，且不可撤销。
 
 ## 内置终端
