@@ -74,8 +74,9 @@ QUEUE_TICK_S = 1.0
 # pruned by total size, oldest audit first.
 IMAGE_DIR = "gateway-images"
 IMAGE_MAX_COUNT = 8
-IMAGE_MAX_BYTES = 8 * 1024 * 1024
-IMAGES_MAX_TOTAL_BYTES = 2 * 1024 * 1024 * 1024
+IMAGE_MAX_BYTES = 16 * 1024 * 1024
+IMAGE_MAX_REQUEST_BYTES = 48 * 1024 * 1024
+IMAGES_MAX_TOTAL_BYTES = 20 * 1024 * 1024 * 1024
 IMAGE_EXTENSIONS = {
     "image/png": "png",
     "image/jpeg": "jpg",
@@ -1064,11 +1065,15 @@ class GatewayHandler(BaseHTTPRequestHandler):
             if self.command == "POST":
                 data = self._read_json()
                 data = gateway.apply_key_policy(key_id, data, path)
-                saved = [0]
+                saved = [0, 0]
 
                 def save_image(mime, raw):
+                    if saved[1] + len(raw) > IMAGE_MAX_REQUEST_BYTES:
+                        return ""
                     name = gateway._store_image(audit_id, mime, raw, saved[0])
-                    saved[0] += 1
+                    if name:
+                        saved[0] += 1
+                        saved[1] += len(raw)
                     return name
 
                 content["request"] = sanitize_request(
