@@ -70,13 +70,15 @@ ALLOWED_ROUTES = {
 QUEUE_TICK_S = 1.0
 
 # Images that arrive with a request are written next to the content log instead
-# of being dropped, so an audit row can point at the real file. The folder is
-# pruned by total size, oldest audit first.
+# of being dropped, so an audit row can point at the real file. Retention is
+# whichever comes first: a folder older than IMAGE_RETENTION_DAYS, or the total
+# growing past IMAGES_MAX_TOTAL_BYTES. Oldest audit goes first in both cases.
 IMAGE_DIR = "gateway-images"
 IMAGE_MAX_COUNT = 8
 IMAGE_MAX_BYTES = 16 * 1024 * 1024
 IMAGE_MAX_REQUEST_BYTES = 48 * 1024 * 1024
 IMAGES_MAX_TOTAL_BYTES = 20 * 1024 * 1024 * 1024
+IMAGE_RETENTION_DAYS = 30
 IMAGE_EXTENSIONS = {
     "image/png": "png",
     "image/jpeg": "jpg",
@@ -783,11 +785,16 @@ class GatewayService:
             folders = sorted(root.iterdir(), key=lambda path: path.stat().st_mtime)
         except OSError:
             return
+        cutoff = time.time() - IMAGE_RETENTION_DAYS * 86400
         total = sum(path.stat().st_size for path in root.rglob("*") if path.is_file())
         for folder in folders:
-            if total <= IMAGES_MAX_TOTAL_BYTES:
+            try:
+                expired = folder.stat().st_mtime < cutoff
+                size = sum(path.stat().st_size for path in folder.rglob("*") if path.is_file())
+            except OSError:
+                continue
+            if not expired and total <= IMAGES_MAX_TOTAL_BYTES:
                 break
-            size = sum(path.stat().st_size for path in folder.rglob("*") if path.is_file())
             shutil.rmtree(folder, ignore_errors=True)
             total -= size
 
