@@ -62,6 +62,11 @@ ALLOWED_ROUTES = {
     ("POST", "/v1/messages"),
 }
 
+# A waiter re-checks the queue at least this often. Waiting only on notify_all()
+# leaves the whole queue stalled until its 300 s deadline whenever a wakeup is
+# missed or the smallest ticket belongs to a thread that is not awake yet.
+QUEUE_TICK_S = 1.0
+
 
 def validate_quota(daily_tokens):
     if daily_tokens is None:
@@ -645,7 +650,7 @@ class GatewayService:
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:
                         break
-                    self.condition.wait(remaining)
+                    self.condition.wait(min(remaining, QUEUE_TICK_S))
                 if not acquired:
                     raise Reject(429, "排队超时", 5)
                 self.active += 1
