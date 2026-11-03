@@ -1754,7 +1754,8 @@ document.addEventListener("keydown", event => {
 function renderFrp(data){
   const f = data.frp;
   S.frp = f;
-  const label = f.running ? "运行中 · PID " + f.pid : (f.configured ? "已停止" : "未配置");
+  const label = (f.running ? "运行中 · PID " + f.pid : (f.configured ? "已停止" : "未配置"))
+    + (f.others ? " · 另有 " + f.others + " 个 frpc 残留" : "");
   $("frp-state").innerHTML = '<i class="dot ' + (f.running ? "ok" : "err") + '"></i><span>' + label + "</span>";
   $("frp-endpoint").textContent = f.server
     ? f.server + " · " + f.local_port + " → " + f.remote_port

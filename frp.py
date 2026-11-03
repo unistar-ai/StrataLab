@@ -5,6 +5,7 @@ import os
 import re
 import subprocess
 import threading
+import time
 from pathlib import Path
 
 
@@ -20,6 +21,8 @@ class FrpcService:
         self.nowindow = nowindow
         self.lock = threading.RLock()
         self.proc = None
+        self._others = 0
+        self._others_at = 0.0
         self.auto_start = self._load_auto_start()
 
     def _load_auto_start(self):
@@ -59,12 +62,17 @@ class FrpcService:
             running = self.proc is not None and self.proc.poll() is None
             code = None if running else (self.proc.returncode if self.proc is not None else None)
             connection = self._connection()
+            now = time.monotonic()
+            if now - self._others_at > 10:
+                self._others_at = now
+                self._others = len(self._siblings())
             return {
                 "installed": self.executable.is_file(),
                 "configured": self.config.is_file(),
                 "running": running,
                 "pid": self.proc.pid if running else 0,
                 "exit_code": code,
+                "others": self._others,
                 "auto_start": self.auto_start,
                 **connection,
             }
@@ -72,8 +80,46 @@ class FrpcService:
     def command(self):
         return [str(self.executable), "-c", str(self.config)]
 
+    def _siblings(self):
+        """Every frpc.exe running from this install, not just the one we started.
+
+        A lab restart used to leave the previous tunnel alive, and the cloud
+        server then let whichever client had the proxy keep forwarding even
+        after "stop" killed our own process.
+        """
+        if os.name != "nt":
+            return []
+        query = ("Get-CimInstance Win32_Process -Filter \"Name='frpc.exe'\" "
+                 "| Select-Object ProcessId,ExecutablePath | ConvertTo-Json -Compress")
+        try:
+            result = subprocess.run(["powershell", "-NoProfile", "-Command", query],
+                                    capture_output=True, text=True, timeout=15,
+                                    creationflags=self.nowindow)
+            data = json.loads(result.stdout.strip() or "[]")
+        except (OSError, ValueError, subprocess.TimeoutExpired):
+            return []
+        if isinstance(data, dict):
+            data = [data]
+        own = self.proc.pid if self.proc is not None else 0
+        me = str(self.executable).lower()
+        pids = []
+        for item in data or []:
+            try:
+                pid = int(item.get("ProcessId") or 0)
+            except (TypeError, ValueError):
+                continue
+            if pid and pid != own and str(item.get("ExecutablePath") or "").lower() == me:
+                pids.append(pid)
+        return pids
+
+    def _kill_siblings(self):
+        for pid in self._siblings():
+            subprocess.run(["taskkill", "/PID", str(pid), "/F"],
+                           capture_output=True, creationflags=self.nowindow)
+
     def start(self):
         with self.lock:
+            self._kill_siblings()
             if self.proc is not None and self.proc.poll() is None:
                 return self.public()
             if not self.executable.is_file():
@@ -91,9 +137,7 @@ class FrpcService:
     def stop(self):
         with self.lock:
             proc = self.proc
-            if proc is None:
-                return self.public()
-            if proc.poll() is None:
+            if proc is not None and proc.poll() is None:
                 proc.terminate()
                 try:
                     proc.wait(timeout=5)
@@ -101,6 +145,7 @@ class FrpcService:
                     proc.kill()
                     proc.wait(timeout=3)
             self.proc = None
+            self._kill_siblings()
             return self.public()
 
     def set_auto_start(self, enabled):
