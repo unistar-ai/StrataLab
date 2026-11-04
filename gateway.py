@@ -35,7 +35,7 @@ DEFAULT_CONFIG = {
     "long_queue_tokens": 1048576,
     "long_context_threshold": 32768,
     "store_content": False,
-    "content_max_chars": 20000,
+    "content_max_chars": 0,
     "queue_timeout_s": 30,
     "upstream_timeout_s": 1800,
     "low_resource": False,
@@ -53,7 +53,7 @@ LIMITS = {
     "short_queue_tokens": (1024, 268435456),
     "long_queue_tokens": (1024, 268435456),
     "long_context_threshold": (1024, 1048576),
-    "content_max_chars": (1000, 100000),
+    "content_max_chars": (0, 4000000),
     "queue_timeout_s": (1, 300),
     "upstream_timeout_s": (30, 86400),
     "low_resource_max_tokens": (1, 32768),
@@ -285,7 +285,8 @@ def sanitize_request(data, max_chars, save_image=None):
         return value
 
     request = {key: clean(data[key]) for key in ("system", "messages", "tools") if key in data}
-    return json.dumps(request, ensure_ascii=False)[:max_chars]
+    return json.dumps(request, ensure_ascii=False)[:max_chars] if max_chars > 0 \
+        else json.dumps(request, ensure_ascii=False)
 
 
 def append_response(content, chunk, path, max_chars):
@@ -305,8 +306,9 @@ def append_response(content, chunk, path, max_chars):
         delta = chunk.get("delta") or {}
         content["response"] += delta.get("text") or ""
         content["reasoning"] += delta.get("thinking") or ""
-    content["response"] = content["response"][:max_chars]
-    content["reasoning"] = content["reasoning"][:max_chars]
+    if max_chars > 0:
+        content["response"] = content["response"][:max_chars]
+        content["reasoning"] = content["reasoning"][:max_chars]
 
 
 class Reject(Exception):

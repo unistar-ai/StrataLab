@@ -640,7 +640,10 @@
       <div class="card modal-card" role="dialog" aria-modal="true" aria-label="请求内容">
         <div class="modal-head">
           <h2>请求内容 <span class="hint" id="audit-content-meta"></span></h2>
-          <button class="modal-close" aria-label="关闭" onclick="closeAuditContent()">×</button>
+          <div style="display:flex;gap:8px;align-items:center">
+            <button class="mini" id="audit-expand" style="display:none" onclick="toggleAuditFull()">展开完整内容</button>
+            <button class="modal-close" aria-label="关闭" onclick="closeAuditContent()">×</button>
+          </div>
         </div>
         <div class="modal-body">
           <div class="eyebrow">提示词与工具</div>
@@ -1713,10 +1716,33 @@ async function viewGatewayContent(id){
     $("audit-content-modal").style.display = "flex";
     $("audit-content-meta").textContent = (data.key_name || "—") + " · " + (data.model || "—") + " · HTTP " + data.status;
     $("audit-images").innerHTML = auditImages(data.request);
-    $("audit-request").textContent = auditPretty(data.request);
-    $("audit-response").textContent = data.response || "（空）";
-    $("audit-reasoning").textContent = data.reasoning || "（空）";
+    S.auditFull = data;
+    S.auditExpanded = false;
+    renderAuditContent();
   } catch (e){ toast(e.message, true); }
+}
+function renderAuditContent(){
+  const d = S.auditFull || {};
+  const limit = 60000;
+  const parts = [["audit-request", auditPretty(d.request)],
+                 ["audit-response", d.response || "（空）"],
+                 ["audit-reasoning", d.reasoning || "（空）"]];
+  let clipped = false;
+  for (const [id, text] of parts){
+    const t = text || "";
+    if (!S.auditExpanded && t.length > limit){
+      $(id).textContent = t.slice(0, limit) + "\n\n… 还有 " + (t.length - limit) + " 字，点右上角展开";
+      clipped = true;
+    } else {
+      $(id).textContent = t;
+    }
+  }
+  $("audit-expand").style.display = (clipped || S.auditExpanded) ? "inline-block" : "none";
+  $("audit-expand").textContent = S.auditExpanded ? "收起" : "展开完整内容";
+}
+function toggleAuditFull(){
+  S.auditExpanded = !S.auditExpanded;
+  renderAuditContent();
 }
 function auditImages(request){
   const seen = new Set();
