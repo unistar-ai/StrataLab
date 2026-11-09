@@ -1,4 +1,5 @@
 # Runtime state and local data
+debug/
 _window_profile/
 logs/
 run/

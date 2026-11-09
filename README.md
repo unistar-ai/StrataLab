@@ -63,13 +63,14 @@ Chromium 看到的是 1920×1040 DIP、`devicePixelRatio=2`，所以 1400×940 �
 
 代价是这套窗口是一棵独立的 Chromium 进程树（约 150–300 MB 内存）。
 
-## 十个页签
+## 十一个页签
 
 | 页签 | 内容 |
 |---|---|
 | **概览** | 服务统计（已处理 / 复用 token、缓存效率，可切「本次运行 / 全部」）、平均速度（预填 / 生成 / MTP 投机命中）、API 端点（一键复制）、客户端接入清单、引擎信息卡（模型 / 上下文 / 槽位 / 采样 / 显存 / 内存）、5 分钟趋势、最近任务 |
 | **模型** | 游戏低占用模式开关、模型卡片（就绪度按真实字节）、磁盘扫描（`models` 下所有 gguf 目录、大小、是否残留分片）、补分片（hf-mirror 续传，写 `*.labpart`，字节校验通过才改名） |
 | **终端** | 内置真终端（Windows ConPTY + xterm.js）：cmd / PowerShell / pi / Python 四个入口，直接在里面敲命令、跑 pi 的 TUI |
+| **调试** | 本机 SSH（`127.0.0.1:2222`，仅密钥）。Kimi Code 用远程环境，Cursor CLI 连上后运行 `agent`。可选经 FRP 单独转发，不走 Gateway |
 | **对话** | 直接和引擎聊天：思考强度、max_tokens、系统提示；流式输出，每条显示 tok/s、tokens、首字延迟；可中途停止 |
 | **基准** | 单请求测速（提示词 / tokens / 思考强度）+ 最近记录表（tok/s、tokens、首字、缓存） |
 | **历史** | 启动/测速/对话/下载记录表 + decode 速度走势 + CSV 导出 + 清空 |
@@ -78,7 +79,7 @@ Chromium 看到的是 1920×1040 DIP、`devicePixelRatio=2`，所以 1400×940 �
 | **日志** | 引擎日志文件切换、正则过滤、跟随滚动 |
 | **设置** | 接入信息、公网 Gateway 开关与默认限额、模型参数（ctx / kv / vision / parallel）、关闭方式 |
 
-页签可以用地址栏直达：`http://127.0.0.1:8765/#models`、`#term`、`#bench`、`#logs`……
+页签可以用地址栏直达：`http://127.0.0.1:8765/#models`、`#term`、`#debug`、`#bench`、`#logs`……
 
 ## 可选公网 AI Gateway
 
@@ -128,9 +129,8 @@ Gateway 跟随 StrataLab 进程运行：退出 StrataLab 后，公网 API 也不
 - 只允许 `GET /v1/models`、`POST /v1/chat/completions`、`POST /v1/messages`，不代理管理 API、终端或任意路径。
 - `GET /v1/models` 列出本机分片完整的全部模型及加载状态，不要求引擎已启动。聊天请求的 `model` 可以是其中任意一个：Gateway 会先卸载之前的模型并加载目标模型，就绪后再转发；切换在单上游队列中串行执行，加载失败返回 503，未知模型返回 400。输出不能超过限额。OpenAI 同时接受 `max_tokens` 和 `max_completion_tokens`，两者都省略时应用 Gateway 上限；Anthropic 按协议要求 `max_tokens` 必填。
 - 模型页的“游戏低占用模式”使用 Qwen3.6-35B-A3B UD-Q4_K_XL、64K 上下文、CPU 视觉编码器和单请求槽位，并为游戏预留 8 GiB 显存。启用后所有 Gateway 聊天请求固定路由到该模型，单次输出最多 32768 tokens；模式切换先停止接收新请求并等待已接收请求完成，再卸载旧模型。退出后恢复进入模式前的模型。审计同时保存客户端请求模型、实际执行模型和低占用标记。
-- 模型页另有 `qwen3.6-35b-a3b-ud-q4_k_xl-perf64` 高性能档：同样 64K 与 CPU 视觉，但不指定 `--expert-vram`，由引擎自动使用可用显存放置专家；适合关闭游戏和其他 GPU 占用程序时使用。`qwen3.6-35b-a3b-ud-q4_k_xl-perf64p2` 使用相同配置并开启 `parallel=2` 与 `batch-mtp`，允许两个请求同时解码并各自使用 MTP 草稿。各 64K 档通过实际启动配置中的专家显存预算和并行槽位数区分，状态与路由不会混淆。实测两档共 24 条真实请求同时提交：单槽位 44.97 s、849 tok/s、P95 41.2 s；双槽位 47.49 s、804 tok/s、P95 43.6 s。双槽位把 3.15 GiB 显存的专家放置让给了第二个 KV 槽（专家 VRAM 缓存降为 0），因此单请求延迟约翻倍、总吞吐略降，只在“第二个用户不必等第一个人说完”这一点上占优；串行翻译类负载应留在单槽位。
 - 默认请求体最大 4 MiB、30 请求/分钟、单次输出最多 8192 tokens。
-- Gateway 上游并发数跟随当前运行档位的 `parallel` 自动设置：普通档为 1，高性能双槽位档为 2。等待队列分为短上下文和长上下文两类，默认长文阈值为 32768 tokens。每个请求按“目标模型离线 tokenizer 计算的输入 tokens + `max_tokens`”计入队列；计数复用模型包的 chat template、系统消息、工具定义和控制 token，无需启动引擎，tokenizer 无法加载时明确报错而不回退字节估算。
+- Gateway 上游并发数跟随当前运行档位的 `parallel` 自动设置：Fast、Balanced、Game 均为 1。等待队列分为短上下文和长上下文两类，默认长文阈值为 32768 tokens。每个请求按“目标模型离线 tokenizer 计算的输入 tokens + `max_tokens`”计入队列；计数复用模型包的 chat template、系统消息、工具定义和控制 token，无需启动引擎，tokenizer 无法加载时明确报错而不回退字节估算。
 - 短队列默认等待预算 262144 tokens，长队列默认 1048576 tokens，按等待请求的总上下文长度限流而不是按请求数。短、长任务按 2:1 调度；超过单请求预算、等待 token 预算或 30 秒排队超时返回 429。
 - 支持 OpenAI 与 Anthropic 的非流式响应和 SSE；流式响应逐行刷新，不在 Gateway 缓冲完整内容。
 - 全局和每个 Key 的用量都持久化到 `gateway-state.json`，重启后不清零；旧单 Key 配置自动迁移为“主 Key”。
@@ -149,6 +149,39 @@ Gateway 跟随 StrataLab 进程运行：退出 StrataLab 后，公网 API 也不
 - 请求内容弹窗把图片引用渲染成缩略图，点击在新分页打开原图（`GET /api/gateway/image?id=<请求 ID>&name=<文件名>`，只接受本机管理页的同源请求，参数按固定格式校验）。
 - 从旧版升级时，首次启动会自动把 `gateway-audit.jsonl`、`gateway-content.jsonl` 和 `gateway-images/` 导入数据库，核对行数一致后把旧文件改名为 `*.imported-<时间戳>` 留底，不会直接删除。
 - 「清空审计与用量」会同时清空元数据、内容、图片和全部计数，且不可撤销。
+
+## 调试通道
+
+「调试」页是一条独立的本机 SSH，给 Kimi Code 和 Cursor CLI 进这台机器用。它不是模型 Gateway，也不转发管理页 `8765`。
+
+```text
+Kimi Code / Cursor CLI
+  → SSH 公钥
+  → （可选）云服务器防火墙限制来源后的 FRP 端口
+  → 本机 127.0.0.1:2222 sshd
+  → 当前 Windows 用户的 shell
+```
+
+默认关闭。本机还没有 `sshd.exe` 时，页上的「安装 OpenSSH Server」会弹出 UAC。安装程序会把 Windows 自带的 sshd **服务**设为禁用，并关掉它的防火墙规则，避免 22 端口听在所有网卡上。StrataLab 自己用 `sshd -D` 只听 `127.0.0.1:2222`。
+
+公钥和这个 Windows 账号的登录密码都可以用，空密码和 TCP 转发关掉。密码登录必须由 Windows 的 OpenSSH 服务（LocalSystem）接受：普通用户启动的 `sshd` 校验完正确密码后无法创建登录令牌，客户端只会看到连接被远端关掉。私钥在 `debug/id_ed25519`，页面只显示路径和公钥。拷到客户端后放到 `~/.ssh/strata-lab`。更换密钥要先停通道，旧私钥立刻失效。密码就是本机 `Administrator` 的 Windows 密码，没有单独的 SSH 密码。
+
+勾选「启动时经 FRP 暴露」才会在 `frpc.toml` 里追加标记块 `strata-debug`（默认远程端口 `18022`），并在隧道已经运行时重启 FRPC。Gateway 的 `18080` 不会改成 SSH。云服务器上这个端口不要对全世界开放，只放行自己的地址；StrataLab 不会改云服务器防火墙。
+
+Kimi Code 在**客户端**的 `config.toml` 里加：
+
+```toml
+[environments.strata-lab]
+type = "ssh"
+host = "strata-lab"
+defaultCwd = "D:/work"
+```
+
+然后 `kimi --environment strata-lab`。文件和命令在这台机器上执行，模型和登录状态留在客户端。这台机器还需要 Kimi 执行器 `~/.kimi-code/bin/kimi.exe`；桌面版不会自动放这个文件。
+
+Cursor CLI 没有单独的远程环境协议。客户端 `ssh strata-lab` 进来之后，在本机运行 `agent`。没装时，官方安装命令是 `irm 'https://cursor.com/install?win32=true' | iex`。Cursor 编辑器自带的 `cursor tunnel` 走 vscode.dev，Kimi 用不了。
+
+退出 StrataLab、关窗口或心跳兜底退出时，sshd 会停，并去掉 `frpc.toml` 里的调试转发。通道没开过的话，退出不会改写 FRP 配置。
 
 ## 内置终端
 
@@ -227,6 +260,7 @@ strata serve: prompt 24 tokens = 17 reused + 7 read in 269 ms (26.0 tok/s),
 | `logs/window.log` | 每次开窗的记录（用哪个浏览器、URL、尺寸） |
 | `run/terminal.out/.in/.ctl` | 内置终端的字节流、键盘输入、控制行（resize / stop） |
 | `run/terminal.log` / `terminal.stderr` | 终端宿主的日志与崩溃回溯 |
+| `debug/` | 调试 SSH 的主机密钥、客户端私钥、`sshd_config` 和日志。私钥不进页面响应，目录已在 `.gitignore` |
 | `_window_profile/` | 应用窗口的独立 Chromium 配置（可删，会重建） |
 
 ## API
@@ -245,6 +279,11 @@ strata serve: prompt 24 tokens = 17 reused + 7 read in 269 ms (26.0 tok/s),
 | POST | `/api/frp/start` | 启动由 StrataLab 管理的 FRPC |
 | POST | `/api/frp/stop` | 停止由 StrataLab 管理的 FRPC |
 | POST | `/api/frp/config` | 设置 FRPC 是否随 StrataLab 启动 |
+| GET | `/api/debug` | 调试 SSH 的状态、接入片段和 sshd 日志；不返回私钥 |
+| POST | `/api/debug/start` | `{expose?, remote_port?}` 启动本机 sshd；`expose` 时追加 FRP 转发 |
+| POST | `/api/debug/stop` | 停止 sshd，并去掉调试 FRP 转发 |
+| POST | `/api/debug/install` | 安装 OpenSSH Server（需要 UAC）；不开放 22 端口 |
+| POST | `/api/debug/rekey` | 通道停止时更换客户端密钥 |
 | GET | `/api/meta` | `/props` 摘要：构建版本、模型路径、槽位、采样默认值（不返回 10 KB 的 chat template） |
 | GET | `/api/live` | 当前请求状态、进度、速度、耗时及最近 60 个 Prefill/Decode 速度采样点 |
 | GET | `/api/metrics` | 采样序列（每 2 秒，最多 300 点）+ 实时解析的引擎统计 |
@@ -306,7 +345,7 @@ strata serve: prompt 24 tokens = 17 reused + 7 read in 269 ms (26.0 tok/s),
 - **端口 8765 固定**（要改就改 `app.py` 里的 `PORT`）。
 - **取消对话/测速只断开本端连接**：引擎可能把这一段生成完，紧接着的请求首字会变慢。
 - **内置下载器只有单连接**：hf-mirror 上约 2 MB/s；大批量请用 `bench\parallel_dl.py`（6 路分段 + 校验）。
-- **管理界面不做鉴权**：`8765` 只绑 127.0.0.1，别改 0.0.0.0。公网客户端应走带 API Key 的 Gateway，而不是暴露管理端口。
+- **管理界面不做鉴权**：`8765` 只绑 127.0.0.1，别改 0.0.0.0。公网客户端应走带 API Key 的 Gateway，而不是暴露管理端口。调试 SSH 听在环回的 `2222`，经 FRP 出去之后公钥和 Windows 登录密码都能登。
 - 趋势图在页签不可见时停止刷新（省 CPU），切回来会立刻重画。
 - **不弹黑框**：采样不 `spawn` 进程——显存由一个常驻的 `nvidia-smi --loop-ms=2000` 提供，
   进程检查改用 Toolhelp32（ctypes），`strata.cmd` / `--stop` 这类一次性调用带 `CREATE_NO_WINDOW`。

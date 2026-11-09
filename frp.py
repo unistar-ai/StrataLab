@@ -9,6 +9,46 @@ import time
 from pathlib import Path
 
 
+DEBUG_BEGIN = "# stratalab-debug-begin"
+DEBUG_END = "# stratalab-debug-end"
+
+
+def splice_debug_proxy(text, enabled, local_port=2222, remote_port=18022):
+    """Add or remove the marked debug proxy. The auth token above it is left untouched."""
+    pattern = re.compile(
+        r"\n?" + re.escape(DEBUG_BEGIN) + r".*?" + re.escape(DEBUG_END) + r"\n?",
+        re.S)
+    cleaned = pattern.sub("\n", text).rstrip() + "\n"
+    if not enabled:
+        return cleaned
+    local_port = int(local_port)
+    remote_port = int(remote_port)
+    if not (1024 <= local_port <= 65535 and 1024 <= remote_port <= 65535):
+        raise ValueError("端口必须在 1024–65535")
+    return cleaned + (
+        f"\n{DEBUG_BEGIN}\n"
+        "[[proxies]]\n"
+        'name = "strata-debug"\n'
+        'type = "tcp"\n'
+        'localIP = "127.0.0.1"\n'
+        f"localPort = {local_port}\n"
+        f"remotePort = {remote_port}\n"
+        f"{DEBUG_END}\n"
+    )
+
+
+def parse_debug_proxy(text):
+    match = re.search(re.escape(DEBUG_BEGIN) + r"(.*?)" + re.escape(DEBUG_END), text or "", re.S)
+    if not match:
+        return {"exposed": False, "local_port": None, "remote_port": None}
+
+    def grab(key):
+        found = re.search(rf"^\s*{key}\s*=\s*(\d+)", match.group(1), re.M)
+        return int(found.group(1)) if found else None
+
+    return {"exposed": True, "local_port": grab("localPort"), "remote_port": grab("remotePort")}
+
+
 class FrpcService:
     def __init__(self, root, app_dir, nowindow=0):
         self.root = Path(root)
@@ -56,6 +96,36 @@ class FrpcService:
             path = Path(match.group(1))
             result["log_path"] = str(path if path.is_absolute() else self.directory / path)
         return result
+
+    def _read_config(self):
+        try:
+            return self.config.read_text(encoding="utf-8")
+        except OSError:
+            return ""
+
+    def _write_config(self, text):
+        if not self.config.is_file():
+            raise ValueError(f"找不到 FRPC 配置：{self.config}")
+        tmp = self.config.with_suffix(".toml.tmp")
+        tmp.write_text(text, encoding="utf-8")
+        tmp.replace(self.config)
+
+    def debug_proxy(self):
+        with self.lock:
+            return parse_debug_proxy(self._read_config())
+
+    def set_debug_proxy(self, enabled, local_port=2222, remote_port=18022):
+        """Rewrite only the marked debug block. Does not start or stop frpc."""
+        with self.lock:
+            text = self._read_config()
+            if not text and not self.config.is_file():
+                raise ValueError(f"找不到 FRPC 配置：{self.config}")
+            if not enabled and DEBUG_BEGIN not in text:
+                return {"exposed": False, "local_port": None, "remote_port": None}
+            updated = splice_debug_proxy(text, bool(enabled), local_port, remote_port)
+            if updated != text:
+                self._write_config(updated)
+            return parse_debug_proxy(updated)
 
     def public(self):
         with self.lock:

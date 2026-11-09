@@ -328,6 +328,7 @@
     <button data-tab="dash" class="on">概览</button>
     <button data-tab="models">模型</button>
     <button data-tab="term">终端</button>
+    <button data-tab="debug">调试</button>
     <button data-tab="chat">对话</button>
     <button data-tab="bench">基准</button>
     <button data-tab="history">历史</button>
@@ -488,6 +489,58 @@
     <div class="mute" style="margin-top:6px">
       真 pty（Windows ConPTY），不是伪终端：pi、python -i、带颜色的程序都能正常跑。
       切换页签不会杀进程；「重启」换一个干净的 shell。
+    </div>
+  </section>
+
+  <!-- ================================================================ 调试通道 -->
+  <section class="tab" id="tab-debug">
+    <div class="sec">
+      <div>
+        <div class="eyebrow">调试</div>
+        <h1>本机 SSH 通道</h1>
+      </div>
+      <div class="tools">
+        <span class="chip" id="debug-state"><i class="dot"></i><span>未启动</span></span>
+        <button class="mini" onclick="loadDebug()">刷新</button>
+      </div>
+    </div>
+    <div class="banner info show">
+      <span>只监听 127.0.0.1:2222，不经过 AI Gateway。公钥和本机 Windows 登录密码都可以登。Kimi Code 用 SSH 远程环境；Cursor CLI 连上这台机器后运行 agent。退出 StrataLab 会关掉通道。若经 FRP 暴露，请在云服务器防火墙里限制来源地址。</span>
+    </div>
+    <div class="card">
+      <h2>通道 <span class="hint" id="debug-listen">127.0.0.1:2222</span></h2>
+      <div class="btnrow">
+        <button class="primary" id="debug-toggle" onclick="toggleDebug()">启动通道</button>
+        <button class="mini" id="debug-install" onclick="installDebug()" style="display:none">安装 OpenSSH Server</button>
+        <button class="mini" id="debug-rekey" onclick="rekeyDebug()">更换密钥</button>
+        <label class="inline"><input type="checkbox" id="debug-expose" /> 启动时经 FRP 暴露</label>
+        <label class="inline">远程端口 <input id="debug-port" type="number" min="1024" max="65535" value="18022" style="width:88px" /></label>
+      </div>
+      <div class="mute" id="debug-note" style="margin-top:10px;line-height:1.7"></div>
+    </div>
+    <div class="cols">
+      <div class="card">
+        <h2>本机试连 <button class="mini" onclick="copyDebug('local', this)">复制</button></h2>
+        <pre class="muted mono" id="debug-local" style="white-space:pre-wrap;user-select:text"></pre>
+      </div>
+      <div class="card">
+        <h2>客户端 SSH <button class="mini" onclick="copyDebug('ssh_config', this)">复制</button></h2>
+        <pre class="muted mono" id="debug-ssh" style="white-space:pre-wrap;user-select:text"></pre>
+      </div>
+    </div>
+    <div class="cols">
+      <div class="card">
+        <h2>Kimi Code <button class="mini" onclick="copyDebug('kimi', this)">复制</button></h2>
+        <pre class="muted mono" id="debug-kimi" style="white-space:pre-wrap;user-select:text"></pre>
+      </div>
+      <div class="card">
+        <h2>Cursor CLI <button class="mini" onclick="copyDebug('cursor', this)">复制</button></h2>
+        <pre class="muted mono" id="debug-cursor" style="white-space:pre-wrap;user-select:text"></pre>
+      </div>
+    </div>
+    <div class="card">
+      <h2>sshd 日志</h2>
+      <div class="logbox" id="debug-log" style="flex:initial;min-height:0;max-height:180px">尚未启动</div>
     </div>
   </section>
 
@@ -882,6 +935,7 @@ function openTab(name){
   if (name === "dash") loadLive();
   if (name === "models") { loadScan(); loadLowResource(); }
   if (name === "term") termEnter();
+  if (name === "debug") loadDebug();
   if (name === "history") loadHistory();
   if (name === "gateway") { loadGateway(); loadFrp(); }
   if (name === "keys") loadKeys();
@@ -1807,6 +1861,92 @@ async function toggleFrp(){
     setTimeout(loadFrp, 500);
   } catch (e){ toast(e.message, true); loadFrp(); }
 }
+function renderDebug(d){
+  S.debug = d;
+  const frp = d.frp || {};
+  const up = !!d.running;
+  let label = up ? "运行中 · PID " + d.pid : "已停止";
+  if (!d.installed) label = "未安装 sshd";
+  if (d.installing) label = "正在安装 OpenSSH Server";
+  if (up && d.test_ok === false) label += " · 回环未通过";
+  if (up && d.test_ok) label += " · 回环已通过";
+  if (frp.exposed) label += " · FRP " + frp.remote_port;
+  $("debug-state").innerHTML = '<i class="dot ' + (up && d.test_ok !== false ? "ok" : "err") + '"></i><span>' + esc(label) + "</span>";
+  $("debug-listen").textContent = (d.listen || "127.0.0.1:2222") + (d.user ? " · " + d.user : "");
+  $("debug-toggle").textContent = up ? "停止通道" : "启动通道";
+  $("debug-toggle").disabled = !!d.installing || (!d.installed && !up);
+  $("debug-install").style.display = d.installed ? "none" : "inline-block";
+  $("debug-install").disabled = !!d.installing;
+  $("debug-rekey").disabled = up || !!d.installing;
+  if (up) $("debug-expose").checked = !!frp.exposed;
+  $("debug-expose").disabled = up;
+  if (up) $("debug-port").value = d.remote_port || 18022;
+  $("debug-port").disabled = up;
+  const notes = [];
+  notes.push("私钥在 " + (d.key_path || "debug\\id_ed25519") + "。拷到客户端后改名为 ~/.ssh/strata-lab，不要把私钥发给别人。");
+  if (!d.installed) notes.push("这台机器还没有 sshd。安装会弹出 UAC，并把 Windows 自带的 sshd 服务设为禁用，避免 22 端口监听所有网卡。");
+  if (d.install_error) notes.push(d.install_error);
+  if (d.expose_error) notes.push(d.expose_error);
+  if (d.test_error) notes.push(d.test_error);
+  if (!d.kimi) notes.push("Kimi 执行器不在 ~/.kimi-code/bin/kimi.exe。远程环境要这个文件；桌面版不会自动放上去。");
+  if (!d.agent) notes.push("Cursor CLI（agent）还没安装。SSH 进去之后再装，模型调用仍走 Cursor 自己的账号。");
+  $("debug-note").textContent = notes.join(" ");
+  const snip = d.snippets || {};
+  $("debug-local").textContent = snip.local || "";
+  $("debug-ssh").textContent = snip.ssh_config || "";
+  $("debug-kimi").textContent = (d.kimi ? "" : "# 先在本机放好 Kimi 执行器，再把下面这段写进客户端 config.toml\n")
+    + (snip.kimi || "") + "\n# 客户端：kimi --environment strata-lab";
+  $("debug-cursor").textContent = (snip.cursor || "")
+    + (d.agent ? "" : "\n# 本机还没有 agent。SSH 进去后执行：\n# irm 'https://cursor.com/install?win32=true' | iex");
+  $("debug-log").textContent = (d.logs || []).join("\n") || "尚未启动";
+}
+async function loadDebug(){
+  try { renderDebug(await api("/api/debug")); }
+  catch (e) { $("debug-state").innerHTML = '<i class="dot err"></i><span>' + esc(e.message) + "</span>"; }
+}
+async function copyDebug(id, btn){
+  const snip = (S.debug && S.debug.snippets) || {};
+  let text = snip[id] || "";
+  if (id === "kimi") text = $("debug-kimi").textContent;
+  if (id === "cursor") text = $("debug-cursor").textContent;
+  if (!text) return;
+  await copyText(text, btn);
+}
+async function toggleDebug(){
+  if (!S.debug) return;
+  const expose = $("debug-expose").checked;
+  const remote = parseInt($("debug-port").value, 10);
+  try {
+    if (S.debug.running) {
+      const r = await api("/api/debug/stop", { method:"POST", body:"{}" });
+      renderDebug(r.debug);
+      toast(r.debug.frp_restarted ? "通道已停止，FRP 已重启" : "通道已停止");
+    } else {
+      const r = await api("/api/debug/start", { method:"POST", body:JSON.stringify({ expose:expose, remote_port:remote }) });
+      renderDebug(r.debug);
+      toast(r.debug.test_ok ? "通道已启动，本机回环通过" : "通道已启动，但本机回环没通过");
+    }
+  } catch (e) {
+    toast(e.message, true);
+    if (e.data && e.data.debug) renderDebug(e.data.debug);
+    else loadDebug();
+  }
+}
+async function installDebug(){
+  try {
+    const r = await api("/api/debug/install", { method:"POST", body:"{}" });
+    renderDebug(r.debug);
+    toast(r.debug.installed ? "OpenSSH Server 已安装" : "请在桌面确认 UAC");
+  } catch (e) { toast(e.message, true); }
+}
+async function rekeyDebug(){
+  if (!confirm("更换后，已经拷走的旧私钥会失效。")) return;
+  try {
+    const r = await api("/api/debug/rekey", { method:"POST", body:"{}" });
+    renderDebug(r.debug);
+    toast("已更换密钥");
+  } catch (e) { toast(e.message, true); }
+}
 async function setFrpAuto(enabled){
   try {
     const r = await api("/api/frp/config", { method:"POST", body:JSON.stringify({ auto_start:enabled }) });
@@ -2175,6 +2315,7 @@ setInterval(() => loadStats(), 4000);
 setInterval(() => { if (S.tab === "dash") loadMetrics(); }, 3000);
 setInterval(() => { if (S.tab === "models") loadLowResource(); }, 3000);
 setInterval(() => { if (S.tab === "gateway") { loadGateway(); loadFrp(); } }, 4000);
+setInterval(() => { if (S.tab === "debug") loadDebug(); }, 4000);
 setInterval(() => { if (S.tab === "logs") loadLogs(); }, 8000);
 </script>
 </body>

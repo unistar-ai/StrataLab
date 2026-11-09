@@ -18,6 +18,11 @@ Zero dependency (stdlib only), binds 127.0.0.1. Backend for ui.html.
   POST /api/frp/start        start the managed FRPC process
   POST /api/frp/stop         stop the managed FRPC process
   POST /api/frp/config       configure FRPC auto-start with the lab
+  GET  /api/debug            localhost SSH channel status, snippets, sshd log
+  POST /api/debug/start      {expose?, remote_port?} start sshd; expose adds an FRP proxy
+  POST /api/debug/stop       stop sshd and remove the debug FRP proxy
+  POST /api/debug/install    install OpenSSH Server (UAC); does not open port 22
+  POST /api/debug/rekey      replace the client key while the channel is stopped
   GET  /api/meta             /props summary: build, model path, sampling defaults
   GET  /api/live             current request phase, progress and speed
   GET  /api/metrics          sampled time series + parsed engine statistics
@@ -60,6 +65,8 @@ from pathlib import Path
 
 from gateway import GatewayService
 from frp import FrpcService
+from debug_channel import PORT as DEBUG_PORT
+from debug_channel import DebugChannel
 from token_counter import TokenCounter
 
 APP_DIR = Path(__file__).resolve().parent
@@ -116,27 +123,6 @@ DEFAULT_PROFILES = {
         "shard": ["Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.gguf", 54817524224],
         "repo_dir": "IQ3_S",
     },
-    "quality": {
-        "title": "UD-Q4_K_XL", "model_label": "UD-Q4_K_XL · 4 bit",
-        "family": "unsloth", "model": "ud-q4_k_xl", "path": str(MODELS_ROOT / "UD-Q4_K_XL"),
-        "served_id": "qwen3.8-flash-next-unsloth-ud-q4_k_xl",
-        "ctx": 262144, "kv": "k8v4", "vision": "cpu", "parallel": 1,
-        "extra": ["--set", "resident-budget-gib=44"],
-        "desc": "分布保真度最高。64.5 GiB 专家池只能部分常驻（实测 28–43 GiB），其余按需从 SSD 读取，预填和生成都较慢，适合更看重质量的任务。",
-        "speed": "实测 decode 25–27 tok/s · 预填 ~724 tok/s",
-        "shard": ["Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf", 10946624],
-        "repo_dir": "UD-Q4_K_XL",
-    },
-    "iq4xs": {
-        "title": "UD-IQ4_XS", "model_label": "UD-IQ4_XS · 4 bit",
-        "family": "unsloth", "model": "ud-iq4_xs", "path": str(MODELS_ROOT / "UD-IQ4_XS"),
-        "served_id": "qwen3.8-flash-next-unsloth-ud-iq4_xs",
-        "ctx": 262144, "kv": "k8v4", "vision": "cpu", "parallel": 1, "extra": [],
-        "desc": "4-bit 动态量化。89 GiB 权重，部分专家按需从 SSD 读取，速度约为 IQ3_S 的一半。",
-        "speed": "实测 decode 33–38 tok/s · 预填 ~945 tok/s",
-        "shard": ["Qwen3.8-Flash-Next-UD-IQ4_XS-00001-of-00003.gguf", 10946624],
-        "repo_dir": "UD-IQ4_XS",
-    },
     "game": {
         "title": "35B-A3B Q4", "model_label": "Qwen3.6-35B-A3B · Q4",
         "family": "qwen36", "model": "ud-q4_k_xl",
@@ -148,37 +134,6 @@ DEFAULT_PROFILES = {
         "extra": ["--set", "expert-vram=5.0"],
         "desc": "游戏低占用模式。35B 总参数、约 3B 激活，64K 上下文，CPU 视觉，单请求运行，预留 8 GiB 显存。",
         "speed": "22.9 GB 权重 · 资源占用远低于 Flash-Next",
-        "shard": ["Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf", 22853663008],
-        "repo": "unsloth/Qwen3.6-35B-A3B-MTP-GGUF",
-        "download_url": ("https://modelscope.cn/models/unsloth/Qwen3.6-35B-A3B-MTP-GGUF/"
-                         "resolve/master/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf"),
-    },
-    "perf64": {
-        "title": "35B-A3B 64K 高性能", "model_label": "Qwen3.6-35B-A3B · 64K 高性能",
-        "family": "qwen36", "model": "ud-q4_k_xl",
-        "token_model": "qwen36-ud-q4_k_xl",
-        "path": str(MODELS_ROOT / "qwen36-UD-Q4_K_XL"),
-        "served_id": "qwen3.6-35b-a3b-ud-q4_k_xl-perf64",
-        "engine_id": "qwen3.6-35b-a3b-ud-q4_k_xl",
-        "ctx": 65536, "kv": "", "vision": "cpu", "parallel": 1, "extra": [],
-        "desc": "64K 高性能模式。不使用固定专家显存预算，由引擎自动吃满可用显存，适合关闭游戏和 GPU 后台程序时使用。",
-        "speed": "22.9 GB 权重 · 64K · 专家显存自动",
-        "shard": ["Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf", 22853663008],
-        "repo": "unsloth/Qwen3.6-35B-A3B-MTP-GGUF",
-        "download_url": ("https://modelscope.cn/models/unsloth/Qwen3.6-35B-A3B-MTP-GGUF/"
-                         "resolve/master/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf"),
-    },
-    "perf64p2": {
-        "title": "35B-A3B 64K 高性能 ×2", "model_label": "Qwen3.6-35B-A3B · 64K 高性能 ×2",
-        "family": "qwen36", "model": "ud-q4_k_xl",
-        "token_model": "qwen36-ud-q4_k_xl",
-        "path": str(MODELS_ROOT / "qwen36-UD-Q4_K_XL"),
-        "served_id": "qwen3.6-35b-a3b-ud-q4_k_xl-perf64p2",
-        "engine_id": "qwen3.6-35b-a3b-ud-q4_k_xl",
-        "ctx": 65536, "kv": "", "vision": "cpu", "parallel": 2,
-        "extra": ["--set", "batch-mtp=1"],
-        "desc": "64K 高性能双槽位。专家显存自动分配，两个请求可同时解码；每个槽位有独立 KV、会话状态和 MTP 草稿。",
-        "speed": "22.9 GB 权重 · 64K · 2 并发 · batch MTP",
         "shard": ["Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf", 22853663008],
         "repo": "unsloth/Qwen3.6-35B-A3B-MTP-GGUF",
         "download_url": ("https://modelscope.cn/models/unsloth/Qwen3.6-35B-A3B-MTP-GGUF/"
@@ -198,6 +153,7 @@ GATEWAY = GatewayService(APP_DIR)
 # flash — the sampler alone would do it every two seconds.
 NOWINDOW = 0x08000000 if os.name == "nt" else 0
 FRPC = FrpcService(ROOT, APP_DIR, NOWINDOW)
+DEBUG = DebugChannel(APP_DIR, NOWINDOW, cwd=str(ROOT.parent))
 VRAM_CACHE = {}
 HTTPD = None
 LAST_BEAT = {"t": 0.0}
@@ -1161,6 +1117,7 @@ def watchdog():
         except Exception:
             pass
         TERM.stop()
+        close_debug_channel(restart_frp=False)
         FRPC.stop()
         stop_engine()
         os._exit(0)
@@ -1263,9 +1220,76 @@ def window_watcher():
             log_ui("app window closed and no heartbeat for %ds — stopping the engine"
                    % int(silent))
             TERM.stop()
+            close_debug_channel(restart_frp=False)
             FRPC.stop()
             stop_engine()
             os._exit(0)
+
+
+def unpublish_debug_proxy():
+    """Remove the debug FRP block and restart a running tunnel. Leaves sshd alone."""
+    try:
+        was_running = bool(FRPC.public().get("running"))
+        if not FRPC.debug_proxy().get("exposed"):
+            return False
+        FRPC.set_debug_proxy(False)
+        if was_running:
+            FRPC.stop()
+            FRPC.start()
+            return True
+    except (OSError, ValueError):
+        return False
+    return False
+
+
+def close_debug_channel(restart_frp):
+    """Stop sshd and drop the debug proxy. A lab exit must not restart frpc."""
+    DEBUG.stop()
+    try:
+        was_running = bool(FRPC.public().get("running")) and restart_frp
+        FRPC.set_debug_proxy(False)
+        if was_running:
+            FRPC.stop()
+            FRPC.start()
+            return True
+    except (OSError, ValueError):
+        return False
+    return False
+
+
+def debug_status():
+    try:
+        server = FRPC.public().get("server") or ""
+    except (OSError, ValueError):
+        server = ""
+    status = DEBUG.public(server)
+    try:
+        status["frp"] = FRPC.debug_proxy()
+    except (OSError, ValueError):
+        status["frp"] = {"exposed": False, "local_port": None, "remote_port": None}
+    return status
+
+
+def debug_remote_port(data):
+    raw = data.get("remote_port", None)
+    if raw is None or raw == "":
+        port = DEBUG.remote_port()
+    elif isinstance(raw, bool) or not isinstance(raw, int):
+        raise ValueError("远程端口必须是整数")
+    else:
+        port = raw
+    if not 1024 <= port <= 65535:
+        raise ValueError("远程端口必须在 1024–65535")
+    reserved = {7000, 8080, 8765, 18080, DEBUG_PORT}
+    try:
+        gateway_port = FRPC.public().get("remote_port")
+    except (OSError, ValueError):
+        gateway_port = None
+    if gateway_port:
+        reserved.add(int(gateway_port))
+    if port in reserved:
+        raise ValueError("这个端口已经用于 Gateway、引擎或 FRP")
+    return port
 
 
 # ---------------------------------------------------------------- jobs
@@ -1808,6 +1832,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/frp":
             return self.reply({"frp": FRPC.public(), "logs": FRPC.logs()})
 
+        if path == "/api/debug":
+            return self.reply(debug_status())
+
         if path == "/api/meta":
             return self.reply(engine_meta())
 
@@ -1906,6 +1933,65 @@ class Handler(BaseHTTPRequestHandler):
             except (ValueError, OSError) as exc:
                 return self.reply({"ok": False, "error": str(exc)}, 400)
 
+        if path == "/api/debug/start":
+            try:
+                remote_port = debug_remote_port(data) if data.get("expose") else None
+                DEBUG.start()
+                restarted = False
+                expose_error = ""
+                if data.get("expose"):
+                    if not DEBUG.public().get("test_ok"):
+                        expose_error = "本机回环没有通过，没有把端口写进 FRP"
+                        restarted = unpublish_debug_proxy()
+                    else:
+                        was_running = bool(FRPC.public().get("running"))
+                        FRPC.set_debug_proxy(True, DEBUG_PORT, remote_port)
+                        DEBUG.remember_port(remote_port)
+                        if was_running:
+                            FRPC.stop()
+                            FRPC.start()
+                            restarted = True
+                else:
+                    try:
+                        DEBUG.remember_port(debug_remote_port(data))
+                    except ValueError:
+                        pass
+                    restarted = unpublish_debug_proxy()
+                status = debug_status()
+                status["frp_restarted"] = restarted
+                status["expose_error"] = expose_error
+                log_ui("debug channel start running=%s test=%s expose=%s"
+                       % (status.get("running"), status.get("test_ok"), bool(data.get("expose"))))
+                return self.reply({"ok": True, "debug": status})
+            except (ValueError, OSError) as exc:
+                return self.reply({"ok": False, "error": str(exc), "debug": debug_status()}, 400)
+
+        if path == "/api/debug/stop":
+            try:
+                restarted = close_debug_channel(restart_frp=True)
+                status = debug_status()
+                status["frp_restarted"] = restarted
+                log_ui("debug channel stopped")
+                return self.reply({"ok": True, "debug": status})
+            except (ValueError, OSError) as exc:
+                return self.reply({"ok": False, "error": str(exc)}, 400)
+
+        if path == "/api/debug/install":
+            try:
+                log_ui("debug channel install requested")
+                DEBUG.install()
+                return self.reply({"ok": True, "debug": debug_status()})
+            except (ValueError, OSError) as exc:
+                return self.reply({"ok": False, "error": str(exc)}, 400)
+
+        if path == "/api/debug/rekey":
+            try:
+                DEBUG.rekey()
+                log_ui("debug channel key replaced")
+                return self.reply({"ok": True, "debug": debug_status()})
+            except (ValueError, OSError) as exc:
+                return self.reply({"ok": False, "error": str(exc)}, 400)
+
         if path == "/api/gateway":
             try:
                 return self.reply({"ok": True, "gateway": GATEWAY.configure(data)})
@@ -1976,6 +2062,7 @@ class Handler(BaseHTTPRequestHandler):
 
             def bye():
                 TERM.stop()
+                close_debug_channel(restart_frp=False)
                 FRPC.stop()
                 if also_engine:
                     stop_engine()
@@ -2205,6 +2292,7 @@ def main():
     if open_it:
         threading.Timer(0.8, raise_window).start()
     HTTPD.serve_forever()
+    close_debug_channel(restart_frp=False)
     FRPC.stop()
 
 
